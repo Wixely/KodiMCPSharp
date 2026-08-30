@@ -28,6 +28,7 @@ Status: browsing, guarded playback, player controls, seeking, volume, stream sel
 | `kodi_playlist_add` | Add a server-issued playable handle to the audio or video playlist |
 | `kodi_playlist_remove` | Remove a validated zero-based playlist position |
 | `kodi_playlist_clear` | Clear the audio or video playlist |
+| `kodi_show_fullscreen_video` | Bring active video back to Kodi's full-screen window and dismiss Kodi overlays/screensaver |
 
 No tool accepts a JSON-RPC method, JSON payload, endpoint, filesystem path, URL, add-on ID, or `plugin://` path. Kodi-originated targets remain in memory behind random, instance-scoped handles that expire after 15 minutes by default and do not survive restart.
 
@@ -83,7 +84,7 @@ Configuration is validated at startup:
 - page, response-size, timeout, handle-lifetime, and handle-capacity settings have hard bounds;
 - invalid TLS certificates are rejected unless explicitly opted out per instance.
 
-Controls require `Kodi:ReadOnly=false` plus their independent `Kodi:Controls` gate: `AllowPlayback`, `AllowPlayerControl`, `AllowSeek`, `AllowVolume`, `AllowStreamSelection`, `AllowPlaybackModes`, or `AllowPlaylists`. The checked-in defaults keep `ReadOnly=true` and every gate false. Play and playlist-add accept only short-lived handles returned by search/browse; they cannot accept caller-supplied paths or URLs.
+Controls require `Kodi:ReadOnly=false` plus their independent `Kodi:Controls` gate: `AllowPlayback`, `AllowPlayerControl`, `AllowSeek`, `AllowVolume`, `AllowStreamSelection`, `AllowPlaybackModes`, `AllowPlaylists`, or `AllowFullscreenVideo`. The checked-in defaults keep `ReadOnly=true` and every gate false. Play and playlist-add accept only short-lived handles returned by search/browse; they cannot accept caller-supplied paths or URLs.
 
 The MCP password can be supplied by a client as `Authorization: Bearer <password>` or `X-MCP-Password`. `/healthz` and `/readyz` do not reveal endpoints and remain available without that password.
 
@@ -144,7 +145,7 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 20-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control policy;
+- a fixed 21-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control policy;
 - player actions, seek bounds, volume/mute, enumerated stream selection, repeat/shuffle, and opaque-handle playlist mutations with synthetic postcondition checks;
 - composable movie and TV-show title/year/genre filters, input validation, and safe genre metadata in results;
 - genre discovery, recent and in-progress media views, and opaque TV-show/season hierarchy traversal.
@@ -153,6 +154,6 @@ Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux an
 
 ## Project status and next action
 
-Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, and TV hierarchy discovery. Live acceptance now covers every new discovery domain and opaque TV show → season → playable episode traversal. Expanded controls and representative add-on traversal remain to be verified live.
+Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, and TV hierarchy discovery. Live acceptance covers every new discovery domain, opaque TV show → season → playable episode traversal, and restoring active playback to Kodi's full-screen video window. Other expanded controls and representative add-on traversal remain to be verified live.
 
 See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.

@@ -410,6 +410,27 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task FullscreenVideo_UsesClosedKodiWindowAndVerifiesScreensaverDismissal()
+    {
+        string? requestedWindow = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "GUI.ActivateWindow" => CaptureParameters(write, root => requestedWindow = root.GetProperty("window").GetString(), "\"OK\""),
+            "GUI.GetProperties" => Element("{\"currentwindow\":{\"id\":12005,\"label\":\"Full screen video\"},\"fullscreen\":true}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowFullscreenVideo = true);
+
+        var result = await service.ShowFullscreenVideoAsync("room", TestContext.Current.CancellationToken);
+
+        Assert.Equal("fullscreenvideo", requestedWindow);
+        Assert.True(result.Accepted);
+        Assert.True(result.Observed);
+        Assert.Equal(1, result.PlayerId);
+    }
+
+    [Fact]
     public async Task Seek_SerializesBoundedRelativeSeconds()
     {
         int? seconds = null;

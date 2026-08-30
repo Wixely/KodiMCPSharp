@@ -23,6 +23,7 @@ public sealed class KodiControlOptions
     public bool AllowStreamSelection { get; set; }
     public bool AllowPlaybackModes { get; set; }
     public bool AllowPlaylists { get; set; }
+    public bool AllowFullscreenVideo { get; set; }
 }
 
 public sealed class HandleOptions

@@ -105,7 +105,7 @@ try
     var controlsEnabled = !kodi.ReadOnly &&
         (kodi.Controls.AllowPlayback || kodi.Controls.AllowPlayerControl || kodi.Controls.AllowSeek ||
          kodi.Controls.AllowVolume || kodi.Controls.AllowStreamSelection || kodi.Controls.AllowPlaybackModes ||
-         kodi.Controls.AllowPlaylists);
+         kodi.Controls.AllowPlaylists || kodi.Controls.AllowFullscreenVideo);
 
     app.UseSerilogRequestLogging();
     app.UseMiddleware<McpPasswordMiddleware>();

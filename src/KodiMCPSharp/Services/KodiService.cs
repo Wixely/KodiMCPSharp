@@ -64,7 +64,7 @@ public sealed partial class KodiService
         [
             "kodi_play_item", "kodi_player_control", "kodi_seek", "kodi_set_volume",
             "kodi_select_stream", "kodi_set_playback_mode", "kodi_playlist_add",
-            "kodi_playlist_remove", "kodi_playlist_clear",
+            "kodi_playlist_remove", "kodi_playlist_clear", "kodi_show_fullscreen_video",
         ],
         ControlGates: new Dictionary<string, bool>
         {
@@ -75,6 +75,7 @@ public sealed partial class KodiService
             ["streamSelection"] = !_options.ReadOnly && _options.Controls.AllowStreamSelection,
             ["playbackModes"] = !_options.ReadOnly && _options.Controls.AllowPlaybackModes,
             ["playlists"] = !_options.ReadOnly && _options.Controls.AllowPlaylists,
+            ["fullscreenVideo"] = !_options.ReadOnly && _options.Controls.AllowFullscreenVideo,
             ["navigation"] = false,
             ["addonActivation"] = false,
             ["administration"] = false,
@@ -389,6 +390,42 @@ public sealed partial class KodiService
 
     public Task<MediaControlResult> PlaylistClearAsync(string? alias, string media, CancellationToken cancellationToken) =>
         MutatePlaylistAsync(alias, media, "clear", null, cancellationToken);
+
+    public async Task<MediaControlResult> ShowFullscreenVideoAsync(string? alias, CancellationToken cancellationToken)
+    {
+        EnsureControl(_options.Controls.AllowFullscreenVideo, "full-screen video display", "AllowFullscreenVideo");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var players = await instance.Client.CallAsync("Player.GetActivePlayers", cancellationToken: cancellationToken);
+            var videoPlayer = players.ValueKind == JsonValueKind.Array
+                ? players.EnumerateArray().FirstOrDefault(player => GetString(player, "type") == "video")
+                : default;
+            var playerId = videoPlayer.ValueKind == JsonValueKind.Object ? GetInt(videoPlayer, "playerid") : null;
+            if (playerId is null) throw new McpException("Kodi does not currently have an active video player.");
+
+            var response = await instance.Client.CallAsync("GUI.ActivateWindow", writer => writer.WriteString("window", "fullscreenvideo"), cancellationToken);
+            var properties = await instance.Client.CallAsync("GUI.GetProperties", writer =>
+                WriteStringArray(writer, "properties", ["currentwindow", "fullscreen"]), cancellationToken);
+            var currentWindow = properties.TryGetProperty("currentwindow", out var window)
+                ? _safeText.Clean(GetString(window, "label"), 100)
+                : null;
+            var normalizedWindow = currentWindow?.Replace(" ", string.Empty, StringComparison.Ordinal);
+            var observed = normalizedWindow is not null &&
+                           normalizedWindow.Contains("fullscreen", StringComparison.OrdinalIgnoreCase) &&
+                           normalizedWindow.Contains("video", StringComparison.OrdinalIgnoreCase);
+            return ControlResult(instance.Alias, "show-fullscreen-video", IsAccepted(response), observed, playerId, "playing",
+                new Dictionary<string, object?>
+                {
+                    ["currentWindow"] = currentWindow,
+                    ["applicationFullscreen"] = GetBool(properties, "fullscreen"),
+                });
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
 
     public async Task<KodiStatusSummary> GetStatusAsync(string? alias, CancellationToken cancellationToken)
     {

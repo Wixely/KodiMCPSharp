@@ -23,6 +23,7 @@ public sealed class ToolBoundaryTests
             "kodi_list_instances", "kodi_list_recent", "kodi_play_item", "kodi_player_control",
             "kodi_playlist_add", "kodi_playlist_clear", "kodi_playlist_remove", "kodi_search_library",
             "kodi_seek", "kodi_select_stream", "kodi_set_playback_mode", "kodi_set_volume",
+            "kodi_show_fullscreen_video",
         ], names);
     }
 

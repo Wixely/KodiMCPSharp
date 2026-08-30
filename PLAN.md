@@ -38,6 +38,7 @@ The browsing slice remained read-only until connection, pagination, redaction, a
 - Support composable title, exact-year, and genre filters for movie and TV-show searches using Kodi's typed filter rules; require at least one filter and return safe genre metadata.
 - Implement bounded genre discovery, recently added views, continue-watching views, and TV show → season → episode traversal. Keep Kodi library identifiers behind action-scoped opaque handles.
 - Keep all control gates false by default. Implement play-by-handle, pause/resume/toggle/stop/next/previous, bounded seek, volume/mute, enumerated stream selection, repeat/shuffle, and handle-based playlist add/remove/clear behind independent gates plus global read-only mode; raw targets remain server-side.
+- Provide a dedicated, independently gated full-screen-video action using Kodi's closed `fullscreenvideo` window enum; do not expose arbitrary GUI windows or input actions.
 - Publish as a compressed self-contained single file. Defer NativeAOT because MCP attribute discovery currently relies on runtime metadata.
 - Pin the current MCPSharp-family baseline (`ModelContextProtocol.AspNetCore` 1.4.0 and .NET 10 family packages) after checking the public family repositories on 2026-08-30.
 
@@ -160,7 +161,7 @@ Use JSON, environment variables, and command-line configuration consistently wit
 ## Verification record
 
 - 2026-08-30: Debug and Release builds completed without warnings.
-- 2026-08-30: 50 xUnit tests passed using synthetic Kodi responses and an in-process HTTP transport, including every implemented control category, expanded player stream inventory, structured search, discovery views, TV hierarchy handles, and the live-discovered Kodi episode-field compatibility regression.
+- 2026-08-30: 51 xUnit tests passed using synthetic Kodi responses and an in-process HTTP transport, including every implemented control category, expanded player stream inventory, structured search, discovery views, TV hierarchy handles, and live-discovered compatibility regressions.
 - 2026-08-30: Read-only tool schema checked for raw method, JSON, path, URL, endpoint, and credential inputs.
 - 2026-08-30: Windows `win-x64` self-contained single-file publish, `/healthz`, `/readyz`, MCP initialization, and seven-tool discovery smoke tests passed.
 - 2026-08-30: Live Kodi 21.2.0 on Android with JSON-RPC API 13.5.0 accepted authenticated HTTP status, video/music source browsing, and bounded movie, TV show, episode, song, and album searches. No titles, paths, credentials, or viewing data were recorded.
@@ -170,6 +171,7 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - 2026-08-30: Added genre discovery, recently added media, continue-watching, and opaque-handle TV show/season browsing. The fixed MCP catalogue now contains 20 bounded tools.
 - 2026-08-30: MCP 2025-06-18 runtime discovery verified all 20 tools and all four new input schemas. The configured Android endpoint accepted a TCP probe but all existing and new JSON-RPC calls failed as unavailable, so live data-contract acceptance remains pending.
 - 2026-08-30: After the Android endpoint recovered, live acceptance passed all three genre domains, all four recent-media domains, all three continue-watching domains, and TV show → season → episode traversal with an opaque playable episode handle. The first pass exposed invalid `year`/`genre` episode detail requests; these were removed to match Kodi's schema and covered by a regression test.
+- 2026-08-30: Added an independently gated `kodi_show_fullscreen_video` control using only Kodi's closed `fullscreenvideo` window. Live acceptance dismissed the screen overlay while preserving active playback and observed the `Fullscreen video` window.
 - Linux runtime, systemd, Docker runtime, and representative add-on behavior remain unverified.
 
 ## Next actions

@@ -214,4 +214,12 @@ public static class KodiTools
         [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.PlaylistClearAsync(alias, media, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_show_fullscreen_video"),
+     Description("Bring the active video player to Kodi's full-screen video window, dismissing Kodi screen overlays such as its screensaver. Requires the fullscreen-video gate.")]
+    public static async Task<string> ShowFullscreenVideo(
+        KodiService service,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ShowFullscreenVideoAsync(alias, cancellationToken), JsonOptions);
 }
