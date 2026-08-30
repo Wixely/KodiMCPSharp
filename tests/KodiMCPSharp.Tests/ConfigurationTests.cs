@@ -47,6 +47,19 @@ public sealed class ConfigurationTests
         Assert.True(result.Failed);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1001)]
+    public void KodiOptions_RejectsUnsafeLearnedRouteLimits(int maximumRoutes)
+    {
+        var result = new KodiOptionsValidator().Validate(null, new KodiOptions
+        {
+            LearnedRoutes = new LearnedRouteOptions { MaximumRoutesPerAddon = maximumRoutes },
+        });
+
+        Assert.True(result.Failed);
+    }
+
     [Fact]
     public void ServerOptions_RequiresPasswordBeyondLoopback()
     {

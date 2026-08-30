@@ -123,6 +123,43 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.BrowseAsync(alias, handle, root, page, pageSize, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_save_addon_route"),
+     Description("Persist a fixed browse or play route from a server-issued add-on handle. Raw add-on targets are never accepted or returned. Requires Kodi:LearnedRoutes:AllowWrite=true.")]
+    public static async Task<string> SaveAddonRoute(
+        KodiService service,
+        [Description("Opaque folder or playable handle discovered by browsing a Kodi add-on.")] string handle,
+        [Description("Semantic route name, such as search_movies or trending_tvshows; 1-100 safe characters.")] string name,
+        [Description("Optional literal value already present in exactly one complete query value of the observed route. When supplied, that value becomes the route's single typed input without exposing its internal parameter name.")] string? sampleValue = null,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.SaveAddonRouteAsync(alias, handle, name, sampleValue, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_list_addon_routes"),
+     Description("List persistent learned add-on routes and issue fresh opaque handles for browsing, playback, or gated removal.")]
+    public static async Task<string> ListAddonRoutes(
+        KodiService service,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListAddonRoutesAsync(alias, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_bind_addon_route"),
+     Description("Bind validated text to a parameterized learned add-on route and return a fresh opaque browse/play handle. The internal plug-in parameter and target remain server-side.")]
+    public static string BindAddonRoute(
+        KodiService service,
+        [Description("Opaque parameterized learned-route handle returned by kodi_save_addon_route or kodi_list_addon_routes.")] string handle,
+        [Description("Text to bind to the learned route's single string input; 1-200 printable characters.")] string input,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null) =>
+        JsonSerializer.Serialize(service.BindAddonRoute(alias, handle, input), JsonOptions);
+
+    [McpServerTool(Name = "kodi_forget_addon_route"),
+     Description("Remove one persistent learned add-on route using its server-issued handle. Requires Kodi:LearnedRoutes:AllowWrite=true.")]
+    public static async Task<string> ForgetAddonRoute(
+        KodiService service,
+        [Description("Opaque learned-route handle returned by kodi_save_addon_route or kodi_list_addon_routes.")] string handle,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ForgetAddonRouteAsync(alias, handle, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_play_item"),
      Description("Play one server-issued playable handle and verify the observed player state. Requires Kodi:ReadOnly=false and Kodi:Controls:AllowPlayback=true; both block playback by default.")]
     public static async Task<string> PlayItem(

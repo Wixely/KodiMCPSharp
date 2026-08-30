@@ -19,6 +19,7 @@ RUN arch="${TARGETARCH:-amd64}"; \
       -p:PublishSingleFile=true \
       -p:EnableCompressionInSingleFile=true \
       -p:DebugType=none -p:DebugSymbols=false
+RUN mkdir -p /app/publish/logs /app/publish/kodimcpsharp_data
 
 FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled-extra AS runtime
 WORKDIR /app
@@ -33,5 +34,5 @@ ENV DOTNET_ENVIRONMENT=Production \
 COPY --from=build --chown=$APP_UID:0 /app/publish ./
 USER $APP_UID
 EXPOSE 5712
-VOLUME ["/app/logs"]
+VOLUME ["/app/logs", "/app/kodimcpsharp_data"]
 ENTRYPOINT ["./KodiMCPSharp"]

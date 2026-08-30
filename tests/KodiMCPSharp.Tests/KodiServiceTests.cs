@@ -377,7 +377,7 @@ public sealed class KodiServiceTests
         var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", fake)], "room");
         var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
         var handle = handles.Create("room", target, "video", "movie", HandleAction.Play);
-        var service = new KodiService(registry, handles, Options.Create(options), new SafeText());
+        var service = new KodiService(registry, handles, new TestLearnedRouteStore(), Options.Create(options), new SafeText(), TimeProvider.System);
 
         var result = await service.PlayItemAsync("room", handle, TestContext.Current.CancellationToken);
 
@@ -569,6 +569,105 @@ public sealed class KodiServiceTests
         Assert.Single(player.Subtitles);
     }
 
+    [Fact]
+    public async Task LearnedAddonRoute_PersistsOnlyObservedPluginHandleAndCanBeReused()
+    {
+        string? receivedDirectory = null;
+        var directoryReads = 0;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Addons.GetAddons" => Element("""
+                {"limits":{"start":0,"end":1,"total":1},"addons":[{"addonid":"plugin.video.synthetic","name":"Synthetic","type":"xbmc.python.pluginsource","enabled":true}]}
+                """),
+            "Files.GetDirectory" when directoryReads++ == 0 => Element("""
+                {"limits":{"start":0,"end":1,"total":1},"files":[{"label":"Search movies","file":"plugin://plugin.video.synthetic/?mode=search_movies","filetype":"directory"}]}
+                """),
+            "Files.GetDirectory" => CaptureDirectory(write, value => receivedDirectory = value),
+            _ => throw new InvalidOperationException(method),
+        });
+        var options = new KodiOptions
+        {
+            DefaultAlias = "room",
+            LearnedRoutes = new LearnedRouteOptions { AllowWrite = true },
+            Handles = new HandleOptions { LifetimeMinutes = 15, Capacity = 100 },
+        };
+        var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", fake)], "room");
+        var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
+        var routeStore = new TestLearnedRouteStore();
+        var service = new KodiService(registry, handles, routeStore, Options.Create(options), new SafeText(), TimeProvider.System);
+
+        var addons = await service.ListAddonsAsync("room", 0, 25, TestContext.Current.CancellationToken);
+        var menu = await service.BrowseAsync("room", Assert.Single(addons.Addons).Handle, "video", 0, 25, TestContext.Current.CancellationToken);
+        var saved = await service.SaveAddonRouteAsync("room", Assert.Single(menu.Items).Handle!, "search_movies", null, TestContext.Current.CancellationToken);
+        var listed = await service.ListAddonRoutesAsync("room", TestContext.Current.CancellationToken);
+        await service.BrowseAsync("room", Assert.Single(listed.Routes).Handle, "video", 0, 25, TestContext.Current.CancellationToken);
+
+        Assert.Equal("Synthetic", saved.AddonName);
+        Assert.Equal("search_movies", saved.Name);
+        Assert.Equal("plugin://plugin.video.synthetic/?mode=search_movies", receivedDirectory);
+        Assert.DoesNotContain("plugin://", JsonSerializer.Serialize(listed), StringComparison.OrdinalIgnoreCase);
+
+        var forgotten = await service.ForgetAddonRouteAsync("room", saved.Handle, TestContext.Current.CancellationToken);
+        Assert.True(forgotten.Removed);
+        Assert.Empty((await service.ListAddonRoutesAsync("room", TestContext.Current.CancellationToken)).Routes);
+    }
+
+    [Fact]
+    public async Task LearnedAddonRoute_WriteIsDisabledByDefault()
+    {
+        var service = CreateService(new FakeKodiClient((_, _) => Element("{}")));
+
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() =>
+            service.SaveAddonRouteAsync("room", "h_untrusted", "search_movies", null, TestContext.Current.CancellationToken));
+
+        Assert.Contains("AllowWrite", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ParameterizedLearnedRoute_InfersObservedValueAndBindsEncodedInput()
+    {
+        string? receivedDirectory = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Files.GetDirectory" => CaptureDirectory(write, value => receivedDirectory = value),
+            _ => throw new InvalidOperationException(method),
+        });
+        var options = new KodiOptions
+        {
+            DefaultAlias = "room",
+            LearnedRoutes = new LearnedRouteOptions { AllowWrite = true },
+            Handles = new HandleOptions { LifetimeMinutes = 15, Capacity = 100 },
+        };
+        var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", fake)], "room");
+        var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
+        var service = new KodiService(registry, handles, new TestLearnedRouteStore(), Options.Create(options), new SafeText(), TimeProvider.System);
+        var observedHandle = handles.Create(
+            "room",
+            "plugin://plugin.video.synthetic/?mode=search_movies&query=Alien",
+            "files",
+            "directory",
+            HandleAction.Browse,
+            "plugin.video.synthetic",
+            "Synthetic");
+
+        var saved = await service.SaveAddonRouteAsync(
+            "room", observedHandle, "search_movies", "Alien", TestContext.Current.CancellationToken);
+        var bound = service.BindAddonRoute("room", saved.Handle, "Dune & mode=unsafe");
+        await service.BrowseAsync("room", bound.Handle, "video", 0, 25, TestContext.Current.CancellationToken);
+
+        Assert.True(saved.RequiresInput);
+        Assert.Equal("input", saved.InputName);
+        Assert.Equal(200, saved.InputMaximumLength);
+        Assert.True(bound.CanBrowse);
+        Assert.Equal("plugin://plugin.video.synthetic/?mode=search_movies&query=Dune%20%26%20mode%3Dunsafe", receivedDirectory);
+        Assert.DoesNotContain("plugin://", JsonSerializer.Serialize(saved), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Alien", JsonSerializer.Serialize(saved), StringComparison.Ordinal);
+
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() => service.SaveAddonRouteAsync(
+            "room", observedHandle, "unsafe_mode", "search_movies", TestContext.Current.CancellationToken));
+        Assert.Contains("exactly one", exception.Message, StringComparison.Ordinal);
+    }
+
     private static KodiService CreateService(IKodiRpcClient client)
     {
         var options = new KodiOptions
@@ -578,7 +677,7 @@ public sealed class KodiServiceTests
         };
         var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", client)], "room");
         var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
-        return new KodiService(registry, handles, Options.Create(options), new SafeText());
+        return new KodiService(registry, handles, new TestLearnedRouteStore(), Options.Create(options), new SafeText(), TimeProvider.System);
     }
 
     private static KodiService CreateControlService(IKodiRpcClient client, Action<KodiControlOptions> configure) =>
@@ -599,7 +698,7 @@ public sealed class KodiServiceTests
         };
         var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", client)], "room");
         var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
-        return (new KodiService(registry, handles, Options.Create(options), new SafeText()), handles);
+        return (new KodiService(registry, handles, new TestLearnedRouteStore(), Options.Create(options), new SafeText(), TimeProvider.System), handles);
     }
 
     private static JsonElement CaptureDirectory(Action<Utf8JsonWriter>? write, Action<string?> capture)
@@ -640,5 +739,31 @@ public sealed class KodiServiceTests
     {
         public Task<JsonElement> CallAsync(string method, Action<Utf8JsonWriter>? writeParameters = null, CancellationToken cancellationToken = default) =>
             Task.FromResult(handler(method, writeParameters));
+    }
+
+    private sealed class TestLearnedRouteStore : ILearnedRouteStore
+    {
+        private readonly List<LearnedRouteEntry> _routes = [];
+
+        public Task<LearnedRouteEntry> SaveAsync(LearnedRouteEntry route, CancellationToken cancellationToken)
+        {
+            _routes.RemoveAll(value => value.InstanceAlias.Equals(route.InstanceAlias, StringComparison.OrdinalIgnoreCase) &&
+                                       value.AddonId.Equals(route.AddonId, StringComparison.Ordinal) &&
+                                       value.Name.Equals(route.Name, StringComparison.OrdinalIgnoreCase));
+            _routes.Add(route);
+            return Task.FromResult(route);
+        }
+
+        public Task<IReadOnlyList<LearnedRouteEntry>> ListAsync(string instanceAlias, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<LearnedRouteEntry>>(
+                _routes.Where(value => value.InstanceAlias.Equals(instanceAlias, StringComparison.OrdinalIgnoreCase)).ToArray());
+
+        public Task<bool> DeleteAsync(string instanceAlias, string addonId, string name, CancellationToken cancellationToken)
+        {
+            var removed = _routes.RemoveAll(value => value.InstanceAlias.Equals(instanceAlias, StringComparison.OrdinalIgnoreCase) &&
+                                                     value.AddonId.Equals(addonId, StringComparison.Ordinal) &&
+                                                     value.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) > 0;
+            return Task.FromResult(removed);
+        }
     }
 }

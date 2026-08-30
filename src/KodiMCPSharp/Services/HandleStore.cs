@@ -12,6 +12,8 @@ public enum HandleAction
     Browse = 1,
     Play = 2,
     LibraryBrowse = 4,
+    ManageLearnedRoute = 8,
+    BindLearnedRoute = 16,
 }
 
 public sealed record HandleEntry(
@@ -20,11 +22,24 @@ public sealed record HandleEntry(
     string Media,
     string Kind,
     HandleAction Actions,
-    DateTimeOffset ExpiresUtc);
+    DateTimeOffset ExpiresUtc,
+    string? AddonId = null,
+    string? AddonName = null,
+    string? LearnedRouteName = null,
+    HandleAction TemplateResultActions = HandleAction.None);
 
 public interface IHandleStore
 {
-    string Create(string instanceAlias, string target, string media, string kind, HandleAction actions);
+    string Create(
+        string instanceAlias,
+        string target,
+        string media,
+        string kind,
+        HandleAction actions,
+        string? addonId = null,
+        string? addonName = null,
+        string? learnedRouteName = null,
+        HandleAction templateResultActions = HandleAction.None);
     HandleEntry Resolve(string handle, string instanceAlias, HandleAction requiredAction);
     int Count { get; }
 }
@@ -54,7 +69,16 @@ public sealed class InMemoryHandleStore : IHandleStore
         get { lock (_sync) return _entries.Count; }
     }
 
-    public string Create(string instanceAlias, string target, string media, string kind, HandleAction actions)
+    public string Create(
+        string instanceAlias,
+        string target,
+        string media,
+        string kind,
+        HandleAction actions,
+        string? addonId = null,
+        string? addonName = null,
+        string? learnedRouteName = null,
+        HandleAction templateResultActions = HandleAction.None)
     {
         lock (_sync)
         {
@@ -71,7 +95,8 @@ public sealed class InMemoryHandleStore : IHandleStore
                     .TrimEnd('=').Replace('+', '-').Replace('/', '_');
             } while (_entries.ContainsKey(handle));
             _entries.Add(handle, new HandleEntry(
-                instanceAlias, target, media, kind, actions, _timeProvider.GetUtcNow().Add(_lifetime)));
+                instanceAlias, target, media, kind, actions, _timeProvider.GetUtcNow().Add(_lifetime),
+                addonId, addonName, learnedRouteName, templateResultActions));
             return handle;
         }
     }

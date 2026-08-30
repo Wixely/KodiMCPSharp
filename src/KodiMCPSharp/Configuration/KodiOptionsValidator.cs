@@ -12,6 +12,15 @@ public sealed class KodiOptionsValidator : IValidateOptions<KodiOptions>
         if (options.MaximumPageSize is < 1 or > 200) failures.Add("Kodi:MaximumPageSize must be between 1 and 200.");
         if (options.Handles.LifetimeMinutes is < 1 or > 1440) failures.Add("Kodi:Handles:LifetimeMinutes must be between 1 and 1440.");
         if (options.Handles.Capacity is < 10 or > 100000) failures.Add("Kodi:Handles:Capacity must be between 10 and 100000.");
+        if (string.IsNullOrWhiteSpace(options.LearnedRoutes.Directory) || options.LearnedRoutes.Directory.Length > 1024 ||
+            options.LearnedRoutes.Directory.Contains('\0'))
+        {
+            failures.Add("Kodi:LearnedRoutes:Directory must be a non-empty filesystem directory path of at most 1024 characters.");
+        }
+        if (options.LearnedRoutes.MaximumRoutesPerAddon is < 1 or > 1000)
+        {
+            failures.Add("Kodi:LearnedRoutes:MaximumRoutesPerAddon must be between 1 and 1000.");
+        }
 
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var instance in options.Instances)

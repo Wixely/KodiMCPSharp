@@ -25,6 +25,11 @@
       "LifetimeMinutes": 15,
       "Capacity": 5000
     },
+    "LearnedRoutes": {
+      "Directory": "kodimcpsharp_data/addon-routes",
+      "AllowWrite": false,
+      "MaximumRoutesPerAddon": 100
+    },
     "Instances": []
   },
   "Serilog": {

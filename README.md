@@ -2,7 +2,7 @@
 
 KodiMCPSharp is a read-first MCP server for inspecting, browsing, and controlling media on one or more Kodi instances through Kodi's supported JSON-RPC HTTP interface. It is written in C# for .NET 10 and exposes a stateless Streamable HTTP MCP endpoint.
 
-Status: browsing, guarded playback, player controls, seeking, volume, stream selection, playback modes, and playlist mutations are implemented. Every state-changing category remains disabled by default and has its own deployment gate.
+Status: browsing, persistent fixed and single-input learned add-on routes, guarded playback, player controls, seeking, volume, stream selection, playback modes, and playlist mutations are implemented. Every state-changing category remains disabled by default and has its own deployment gate.
 
 ## Available tools
 
@@ -19,6 +19,10 @@ Status: browsing, guarded playback, player controls, seeking, volume, stream sel
 | `kodi_list_favourites` | List safe favourite summaries |
 | `kodi_list_addons` | List enabled add-ons and issue handles for browsable roots |
 | `kodi_browse` | List a closed source root or traverse a server-issued folder handle |
+| `kodi_save_addon_route` | Persist a fixed route or infer one safe search input from a server-issued add-on handle; disabled by default |
+| `kodi_list_addon_routes` | List learned routes and issue fresh opaque handles after restart |
+| `kodi_bind_addon_route` | Bind text to a safely inferred learned search route and issue an opaque handle |
+| `kodi_forget_addon_route` | Remove a learned route using its opaque handle; disabled by default |
 | `kodi_play_item` | Play one server-issued playable handle and verify observed player state; disabled by default |
 | `kodi_player_control` | Pause, resume, toggle, stop, next, or previous |
 | `kodi_seek` | Seek by percentage, bounded relative seconds, or Kodi step |
@@ -30,7 +34,17 @@ Status: browsing, guarded playback, player controls, seeking, volume, stream sel
 | `kodi_playlist_clear` | Clear the audio or video playlist |
 | `kodi_show_fullscreen_video` | Bring active video back to Kodi's full-screen window and dismiss Kodi overlays/screensaver |
 
-No tool accepts a JSON-RPC method, JSON payload, endpoint, filesystem path, URL, add-on ID, or `plugin://` path. Kodi-originated targets remain in memory behind random, instance-scoped handles that expire after 15 minutes by default and do not survive restart.
+No tool accepts a JSON-RPC method, JSON payload, endpoint, filesystem path, URL, add-on ID, or `plugin://` path. Ordinary Kodi-originated targets remain in memory behind random, instance-scoped handles that expire after 15 minutes by default. An explicitly learned fixed add-on route persists server-side and is reissued as a fresh opaque handle after restart; its raw target is never returned through MCP.
+
+### Learned add-on routes
+
+KodiMCPSharp can remember a fixed folder or playable target discovered while browsing an add-on. Call `kodi_save_addon_route` with an opaque add-on handle and a semantic name such as `trending_movies`, then use `kodi_list_addon_routes` later to obtain a fresh handle for `kodi_browse` or `kodi_play_item`. `kodi_forget_addon_route` accepts the same kind of route handle.
+
+For a single-text search route, save a Kodi-observed browse handle whose target already contains a known sample search and pass that literal as `sampleValue`. KodiMCPSharp accepts it only when it matches exactly one complete value under a closed set of search-like query keys; routing keys such as mode/action cannot become inputs. The stored route reports `requiresInput=true`. Pass its route handle and new text to `kodi_bind_addon_route`, then pass the returned opaque handle to `kodi_browse`. Input is length/control validated and percent-encoded as one query value, so it cannot add parameters.
+
+Route writes are local service state and require `Kodi:LearnedRoutes:AllowWrite=true`; they do not require `Kodi:ReadOnly=false` and do not mutate Kodi. The default store is `kodimcpsharp_data/addon-routes` beside the executable and can be changed with `Kodi:LearnedRoutes:Directory`. Relative paths are resolved from the executable directory. Files are separated by Kodi alias and add-on identity, written atomically, and restricted to the service account on Unix-like systems. The complete directory is sensitive runtime state because add-on targets can contain account or query context; do not commit, log, or share it.
+
+The parameterized slice supports one string input inferred from a complete observed search value. It does not synthesize unobserved routes, support multiple parameters, or automate Kodi keyboard/dialog input. Add-ons that never expose a completed search URL still require an add-on-specific adapter or user interaction.
 
 ### Movie and TV-show search
 
@@ -62,6 +76,11 @@ Use this local-only shape, replacing every placeholder on the operator machine:
   },
   "Kodi": {
     "DefaultAlias": "living-room",
+    "LearnedRoutes": {
+      "Directory": "kodimcpsharp_data/addon-routes",
+      "AllowWrite": true,
+      "MaximumRoutesPerAddon": 100
+    },
     "Instances": [
       {
         "Alias": "living-room",
@@ -81,10 +100,12 @@ Configuration is validated at startup:
 - aliases allow only ASCII letters, digits, `-`, and `_` and are compared case-insensitively;
 - endpoints must be absolute HTTP(S) URIs ending in `/jsonrpc`;
 - a non-loopback MCP bind requires `Server:Password`;
-- page, response-size, timeout, handle-lifetime, and handle-capacity settings have hard bounds;
+- page, response-size, timeout, handle-lifetime, handle-capacity, and learned-route limits have hard bounds;
 - invalid TLS certificates are rejected unless explicitly opted out per instance.
 
 Controls require `Kodi:ReadOnly=false` plus their independent `Kodi:Controls` gate: `AllowPlayback`, `AllowPlayerControl`, `AllowSeek`, `AllowVolume`, `AllowStreamSelection`, `AllowPlaybackModes`, `AllowPlaylists`, or `AllowFullscreenVideo`. The checked-in defaults keep `ReadOnly=true` and every gate false. Play and playlist-add accept only short-lived handles returned by search/browse; they cannot accept caller-supplied paths or URLs.
+
+Learned-route writes use the separate `Kodi:LearnedRoutes:AllowWrite` gate, which is also false in checked-in configuration. This gate may be enabled while Kodi remains read-only because it writes only KodiMCPSharp's local route store.
 
 The MCP password can be supplied by a client as `Authorization: Bearer <password>` or `X-MCP-Password`. `/healthz` and `/readyz` do not reveal endpoints and remain available without that password.
 
@@ -113,7 +134,7 @@ NativeAOT is not enabled in this milestone. MCP attribute-based tool discovery s
 
 Windows supports interactive execution and Windows Service hosting. Install the published executable with the service manager of your choice and set its working directory/configuration permissions appropriately.
 
-Linux supports interactive execution and systemd. A hardened starting unit is provided at [`deploy/kodimcpsharp.service`](deploy/kodimcpsharp.service); create the service user, install files under `/opt/kodimcpsharp`, keep secrets in `/etc/kodimcpsharp/environment`, and grant the service user write access only to its log directory.
+Linux supports interactive execution and systemd. A hardened starting unit is provided at [`deploy/kodimcpsharp.service`](deploy/kodimcpsharp.service); create the service user, install files under `/opt/kodimcpsharp`, keep secrets in `/etc/kodimcpsharp/environment`, and grant the service user write access only to its log and learned-route data directories.
 
 Docker builds a non-root, self-contained Linux image:
 
@@ -130,6 +151,7 @@ The compose file publishes only to host loopback. Supply private configuration t
 - The JSON-RPC transport is internal and calls only methods selected by the application; it is not a generic proxy.
 - HTTP responses are time-limited, size-limited, depth-limited, request-ID checked, and classified without logging raw payloads.
 - Ordinary output contains allowlisted summary fields. URI-like values, filesystem paths, control characters, and common credential-bearing strings are redacted.
+- Persistent learned-route files retain raw add-on targets only as protected runtime state; MCP responses and ordinary logs continue to expose only opaque handles.
 - Artwork is represented only as `hasArtwork`; URLs and Kodi image paths are not returned.
 - Basic authentication protects Kodi credentials in transit only when the endpoint uses HTTPS. Use a trusted private network when Kodi is HTTP-only.
 - `AllowInvalidTlsCertificate` is off by default and produces a warning when explicitly enabled.
@@ -145,7 +167,9 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 21-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control policy;
+- a fixed 25-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
+- atomic learned-route persistence, reload, write gating, add-on provenance, fixed-route reuse, and removal;
+- single-string learned search inference, closed search-key policy, encoded binding, and opaque bound-route reuse;
 - player actions, seek bounds, volume/mute, enumerated stream selection, repeat/shuffle, and opaque-handle playlist mutations with synthetic postcondition checks;
 - composable movie and TV-show title/year/genre filters, input validation, and safe genre metadata in results;
 - genre discovery, recent and in-progress media views, and opaque TV-show/season hierarchy traversal.

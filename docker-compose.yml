@@ -7,6 +7,7 @@ services:
       - "127.0.0.1:5712:5712"
     volumes:
       - kodimcp-logs:/app/logs
+      - kodimcp-data:/app/kodimcpsharp_data
     environment:
       KODIMCP_Server__Host: 0.0.0.0
       KODIMCP_Server__Port: 5712
@@ -16,3 +17,4 @@ services:
 
 volumes:
   kodimcp-logs:
+  kodimcp-data:

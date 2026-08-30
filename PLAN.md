@@ -1,6 +1,6 @@
 # KodiMCPSharp starting plan
 
-- Status: Browsing and independently gated media controls implemented; live control and representative add-on acceptance pending
+- Status: Browsing, persistent fixed and single-input learned add-on routes, and independently gated media controls implemented; representative add-on acceptance pending
 - Created: 2026-08-30
 - Owner: TBD
 - Target stack: C# and .NET 10
@@ -32,13 +32,15 @@ The browsing slice remained read-only until connection, pagination, redaction, a
 - Host a stateless Streamable HTTP MCP endpoint at `/mcp` by default.
 - Allow zero configured instances for safe startup/package testing; tools that need Kodi require a unique default or explicit alias.
 - Refuse non-loopback MCP binding unless a server password is configured.
-- Keep discovered raw targets in memory only behind 192-bit random handles scoped to an alias, allowed action, kind, and expiry. Handles do not survive restart.
+- Keep ordinary discovered raw targets in memory behind 192-bit random handles scoped to an alias, allowed action, kind, and expiry. Handles do not survive restart. An explicitly learned fixed add-on route may persist in protected runtime storage and is reissued behind a fresh handle.
 - Return artwork presence only, not Kodi artwork URLs or image paths.
 - Implement library search for movies, TV shows, episodes, songs, and albums; implement favourites, enabled add-ons, sources, and handle-based directory traversal.
 - Support composable title, exact-year, and genre filters for movie and TV-show searches using Kodi's typed filter rules; require at least one filter and return safe genre metadata.
 - Implement bounded genre discovery, recently added views, continue-watching views, and TV show → season → episode traversal. Keep Kodi library identifiers behind action-scoped opaque handles.
 - Keep all control gates false by default. Implement play-by-handle, pause/resume/toggle/stop/next/previous, bounded seek, volume/mute, enumerated stream selection, repeat/shuffle, and handle-based playlist add/remove/clear behind independent gates plus global read-only mode; raw targets remain server-side.
 - Provide a dedicated, independently gated full-screen-video action using Kodi's closed `fullscreenvideo` window enum; do not expose arbitrary GUI windows or input actions.
+- Persist fixed, server-observed add-on browse/play routes under `kodimcpsharp_data/addon-routes` beside the executable by default, with an operator-configurable directory, per-instance/add-on JSON documents, atomic writes, bounded route counts, and a separate disabled-by-default local-write gate. Do not accept or return raw route targets.
+- Support a narrow parameterized-route contract: infer one complete string value only from an approved search-like query key in a server-observed browse route, store the internal template privately, and percent-encode bound input into a fresh opaque handle. Do not permit routing/action keys, multiple parameters, raw templates, or Kodi input injection.
 - Publish as a compressed self-contained single file. Defer NativeAOT because MCP attribute discovery currently relies on runtime metadata.
 - Pin the current MCPSharp-family baseline (`ModelContextProtocol.AspNetCore` 1.4.0 and .NET 10 family packages) after checking the public family repositories on 2026-08-30.
 
@@ -58,6 +60,7 @@ The browsing slice remained read-only until connection, pagination, redaction, a
 - **Kodi protocol client:** typed JSON-RPC contracts, version/capability negotiation, cancellation, bounded responses, and classified errors.
 - **Application operations:** search, browse, player, playlist, favourites, add-on traversal, and safe Kodi navigation over the typed client.
 - **Handle store:** instance-scoped, short-lived opaque handles mapping reviewed results to safe follow-up actions.
+- **Learned-route store:** protected runtime JSON that persists explicitly selected, Kodi-observed fixed add-on targets and recreates opaque handles after restart.
 - **Capability policy:** read-only default plus independent gates for playback and other state changes.
 - **Tool layer:** small semantic MCP tools; no raw JSON-RPC or caller-supplied paths.
 
@@ -77,6 +80,7 @@ Use source-generated `System.Text.Json` contracts where practical for trimming a
 - `kodi_browse` - browse a library/source/add-on folder represented by a server-issued handle.
 - `kodi_list_addons` - bounded installed/enabled add-on metadata with sensitive fields omitted.
 - `kodi_get_capabilities` - effective protocol, feature, and write-control gates.
+- `kodi_list_addon_routes` - persistent learned-route summaries and fresh opaque handles.
 
 Search and browse responses should carry labels, type, playable/folder state, media summary, resume/progress state, safe artwork references, pagination metadata, and opaque handles. They must not expose raw paths by default.
 
@@ -89,18 +93,20 @@ Search and browse responses should carry labels, type, playable/folder state, me
 - `kodi_select_stream` for an enumerated audio/subtitle stream returned by player inspection.
 - `kodi_playlist_add` and other playlist mutations only behind their own gate.
 - `kodi_navigate` using a small named Kodi window/action allowlist if structured workflows require it.
+- `kodi_save_addon_route` and `kodi_forget_addon_route` for independently gated local route-store mutations.
 
 After control requests, query current state and return requested, accepted, observed complete, failed, timed out, or indeterminate separately.
 
 ## Add-on traversal design
 
 - Start from Kodi-discovered add-ons, sources, favourites, or directory results rather than caller-provided plug-in identifiers.
-- Store raw paths only server-side for the lifetime of an opaque handle.
+- Store raw paths only server-side. Persist only explicitly learned fixed plug-in targets that originated from a provenance-carrying Kodi handle.
 - Scope handles to one Kodi instance, one result kind, allowed follow-up actions, and an expiry.
 - Enforce maximum depth, item count, page size, total traversal time, and concurrent add-on requests.
 - Preserve enough safe context for an agent to choose an item without exposing private URL/path parameters.
 - Detect unsupported UI-only workflows and return an explanation rather than falling back silently to input injection.
 - Add specific adapters only through a documented decision identifying the add-on, missing generic capability, licensing, security boundary, and maintenance cost.
+- Treat learned-route documents as sensitive runtime state, invalidate or revalidate them after incompatible add-on changes, and never serialize their raw targets through MCP or logs.
 
 ## Configuration outline
 
@@ -110,6 +116,7 @@ After control requests, query current state and return requested, accepted, obse
 - Read-only mode and independent gates for playback, seek, volume, playlists, navigation, add-on activation, and future administration.
 - Search/browse pagination and maximum-result limits.
 - Handle lifetime, capacity, and redaction policy.
+- Learned-route directory, per-add-on capacity, and disabled-by-default write gate.
 - Audit enablement, retention, and safe event fields.
 
 Use JSON, environment variables, and command-line configuration consistently with the MCPSharp ecosystem. Never place real endpoints, credentials, library paths, add-on parameters, or viewing data in checked-in examples.
@@ -154,14 +161,14 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - Which library domains are required initially: video, music, pictures, PVR/live TV, or all?
 - Are favourites, playlists, subtitles/audio streams, and GUI/window navigation required in the first release?
 - Should artwork be returned as safe proxied bytes, bounded URLs, or metadata only?
-- How long should opaque browse/play handles live, and should they survive service restart?
+- What validation and version fingerprint should mark learned routes stale after an add-on update?
 - Which state-changing operations require per-call confirmation in addition to deployment gates?
 - Which initial release and MCPHub catalogue milestone should follow technical acceptance?
 
 ## Verification record
 
 - 2026-08-30: Debug and Release builds completed without warnings.
-- 2026-08-30: 51 xUnit tests passed using synthetic Kodi responses and an in-process HTTP transport, including every implemented control category, expanded player stream inventory, structured search, discovery views, TV hierarchy handles, and live-discovered compatibility regressions.
+- 2026-08-30: 59 xUnit tests passed using synthetic Kodi responses and an in-process HTTP transport, including every implemented control category, expanded player stream inventory, structured search, discovery views, TV hierarchy handles, learned-route persistence and safe input binding, and live-discovered compatibility regressions.
 - 2026-08-30: Read-only tool schema checked for raw method, JSON, path, URL, endpoint, and credential inputs.
 - 2026-08-30: Windows `win-x64` self-contained single-file publish, `/healthz`, `/readyz`, MCP initialization, and seven-tool discovery smoke tests passed.
 - 2026-08-30: Live Kodi 21.2.0 on Android with JSON-RPC API 13.5.0 accepted authenticated HTTP status, video/music source browsing, and bounded movie, TV show, episode, song, and album searches. No titles, paths, credentials, or viewing data were recorded.
@@ -172,6 +179,8 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - 2026-08-30: MCP 2025-06-18 runtime discovery verified all 20 tools and all four new input schemas. The configured Android endpoint accepted a TCP probe but all existing and new JSON-RPC calls failed as unavailable, so live data-contract acceptance remains pending.
 - 2026-08-30: After the Android endpoint recovered, live acceptance passed all three genre domains, all four recent-media domains, all three continue-watching domains, and TV show → season → episode traversal with an opaque playable episode handle. The first pass exposed invalid `year`/`genre` episode detail requests; these were removed to match Kodi's schema and covered by a regression test.
 - 2026-08-30: Added an independently gated `kodi_show_fullscreen_video` control using only Kodi's closed `fullscreenvideo` window. Live acceptance dismissed the screen overlay while preserving active playback and observed the `Fullscreen video` window.
+- 2026-08-30: Added persistent fixed learned add-on routes with server-observed provenance, atomic per-instance/add-on JSON storage, fresh opaque handles after restart, and independently gated save/forget operations.
+- 2026-08-30: Added one-input learned search routes by inferring a complete sample value only under approved search-like keys; binding validates and encodes caller text before issuing an opaque result handle. Multi-input and UI-dialog workflows remain deferred.
 - Linux runtime, systemd, Docker runtime, and representative add-on behavior remain unverified.
 
 ## Next actions
@@ -183,6 +192,8 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - [ ] Test one simple and one complex installed add-on and document the generic compatibility boundary. - Owner: Agent
 - [x] Add play-from-handle and bounded player, seek, volume, stream, mode, and playlist controls behind independent gates with postcondition checks. - Owner: User / Agent; completed: 2026-08-30
 - [x] Add genre, recent, continue-watching, and TV hierarchy discovery without exposing Kodi IDs or paths. - Owner: Agent; completed: 2026-08-30
+- [x] Add persistent fixed learned add-on routes without accepting or returning raw plug-in targets. - Owner: Agent; completed: 2026-08-30
+- [ ] Validate single-input learned searches against Fen Light and another representative add-on; design multi-input templates only if a demonstrated workflow requires them. - Owner: Agent / User
 - [ ] Run a user-approved live acceptance pass for stop/start, seek, volume, stream, mode, and playlist controls without retaining private media data. - Owner: User / Agent
 - [ ] After technical acceptance, create `Wixely/KodiMCPSharp`, complete the public pre-push review, publish under MIT, and add MCPHub integration as a separately verified milestone. - Owner: User / Agent
 

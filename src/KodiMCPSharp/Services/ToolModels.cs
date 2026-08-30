@@ -9,9 +9,12 @@ public sealed record CapabilitySummary(
     string[] ReadTools,
     string[] ControlTools,
     IReadOnlyDictionary<string, bool> ControlGates,
-    HandlePolicySummary Handles);
+    HandlePolicySummary Handles,
+    LearnedRoutePolicySummary LearnedRoutes);
 
 public sealed record HandlePolicySummary(int LifetimeMinutes, int Capacity, bool SurvivesRestart);
+
+public sealed record LearnedRoutePolicySummary(bool Persistent, bool WriteAllowed, int MaximumRoutesPerAddon);
 
 public sealed record KodiStatusSummary(
     string Alias,
@@ -107,6 +110,32 @@ public sealed record AddonPageSummary(
     int End,
     int Total,
     IReadOnlyList<AddonSummary> Addons);
+
+public sealed record LearnedRouteSummary(
+    string? AddonName,
+    string Name,
+    string Media,
+    string Kind,
+    bool CanBrowse,
+    bool CanPlay,
+    bool RequiresInput,
+    string? InputName,
+    int? InputMaximumLength,
+    DateTimeOffset SavedUtc,
+    string Handle);
+
+public sealed record LearnedRoutePageSummary(
+    string Alias,
+    IReadOnlyList<LearnedRouteSummary> Routes);
+
+public sealed record LearnedRouteMutationResult(string Alias, string Name, bool Removed);
+
+public sealed record BoundLearnedRouteSummary(
+    string Alias,
+    string Name,
+    bool CanBrowse,
+    bool CanPlay,
+    string Handle);
 
 public sealed record PlaybackResult(
     string Alias,

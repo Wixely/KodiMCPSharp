@@ -75,6 +75,7 @@ try
     builder.Services.AddSingleton<SafeText>();
     builder.Services.AddSingleton<KodiInstanceRegistry>();
     builder.Services.AddSingleton<IHandleStore, InMemoryHandleStore>();
+    builder.Services.AddSingleton<ILearnedRouteStore, FileLearnedRouteStore>();
     builder.Services.AddSingleton<KodiService>();
     builder.Services
         .AddMcpServer()

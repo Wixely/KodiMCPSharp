@@ -16,23 +16,30 @@ public sealed partial class KodiService
         "kodi_list_instances", "kodi_get_capabilities", "kodi_get_status",
         "kodi_search_library", "kodi_list_genres", "kodi_list_recent", "kodi_list_continue_watching",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_list_addons", "kodi_browse",
+        "kodi_list_addon_routes", "kodi_bind_addon_route",
     ];
 
     private readonly KodiInstanceRegistry _registry;
     private readonly IHandleStore _handles;
+    private readonly ILearnedRouteStore _learnedRoutes;
     private readonly KodiOptions _options;
     private readonly SafeText _safeText;
+    private readonly TimeProvider _timeProvider;
 
     public KodiService(
         KodiInstanceRegistry registry,
         IHandleStore handles,
+        ILearnedRouteStore learnedRoutes,
         IOptions<KodiOptions> options,
-        SafeText safeText)
+        SafeText safeText,
+        TimeProvider timeProvider)
     {
         _registry = registry;
         _handles = handles;
+        _learnedRoutes = learnedRoutes;
         _options = options.Value;
         _safeText = safeText;
+        _timeProvider = timeProvider;
     }
 
     public async Task<IReadOnlyList<InstanceSummary>> ListInstancesAsync(CancellationToken cancellationToken)
@@ -65,6 +72,7 @@ public sealed partial class KodiService
             "kodi_play_item", "kodi_player_control", "kodi_seek", "kodi_set_volume",
             "kodi_select_stream", "kodi_set_playback_mode", "kodi_playlist_add",
             "kodi_playlist_remove", "kodi_playlist_clear", "kodi_show_fullscreen_video",
+            "kodi_save_addon_route", "kodi_forget_addon_route",
         ],
         ControlGates: new Dictionary<string, bool>
         {
@@ -76,11 +84,13 @@ public sealed partial class KodiService
             ["playbackModes"] = !_options.ReadOnly && _options.Controls.AllowPlaybackModes,
             ["playlists"] = !_options.ReadOnly && _options.Controls.AllowPlaylists,
             ["fullscreenVideo"] = !_options.ReadOnly && _options.Controls.AllowFullscreenVideo,
+            ["learnedRouteWrites"] = _options.LearnedRoutes.AllowWrite,
             ["navigation"] = false,
             ["addonActivation"] = false,
             ["administration"] = false,
         },
-        Handles: new HandlePolicySummary(_options.Handles.LifetimeMinutes, _options.Handles.Capacity, false));
+        Handles: new HandlePolicySummary(_options.Handles.LifetimeMinutes, _options.Handles.Capacity, false),
+        LearnedRoutes: new LearnedRoutePolicySummary(true, _options.LearnedRoutes.AllowWrite, _options.LearnedRoutes.MaximumRoutesPerAddon));
 
     public async Task<PlaybackResult> PlayItemAsync(string? alias, string handle, CancellationToken cancellationToken)
     {
@@ -662,13 +672,14 @@ public sealed partial class KodiService
                 foreach (var addon in values.EnumerateArray())
                 {
                     var id = GetString(addon, "addonid");
+                    var name = _safeText.Clean(GetString(addon, "name") ?? GetString(addon, "label"));
                     var enabled = GetBool(addon, "enabled") ?? true;
                     var browsable = enabled && id is not null && AddonId().IsMatch(id);
                     var handle = browsable
-                        ? _handles.Create(instance.Alias, $"plugin://{id}/", "files", "addon-folder", HandleAction.Browse)
+                        ? _handles.Create(instance.Alias, $"plugin://{id}/", "files", "addon-folder", HandleAction.Browse, id, name)
                         : null;
                     addons.Add(new AddonSummary(
-                        _safeText.Clean(GetString(addon, "name") ?? GetString(addon, "label")),
+                        name,
                         _safeText.Clean(GetString(addon, "type"), 100),
                         _safeText.Clean(GetString(addon, "version"), 50),
                         _safeText.Clean(GetString(addon, "summary") ?? GetString(addon, "description")),
@@ -684,6 +695,110 @@ public sealed partial class KodiService
         {
             throw ToMcpException(instance.Alias, exception);
         }
+    }
+
+    public async Task<LearnedRouteSummary> SaveAddonRouteAsync(
+        string? alias,
+        string handle,
+        string name,
+        string? sampleValue,
+        CancellationToken cancellationToken)
+    {
+        EnsureLearnedRouteWrites();
+        FileLearnedRouteStore.ValidateName(name);
+        var instance = _registry.Resolve(alias);
+        var entry = _handles.Resolve(handle, instance.Alias, HandleAction.None);
+        var actions = entry.Actions & (HandleAction.Browse | HandleAction.Play);
+        if (entry.AddonId is null || actions == HandleAction.None)
+        {
+            throw new McpException("Only a browsable or playable handle discovered inside a Kodi add-on can be learned.");
+        }
+        if (!Uri.TryCreate(entry.Target, UriKind.Absolute, out var target) ||
+            !target.Scheme.Equals("plugin", StringComparison.OrdinalIgnoreCase) ||
+            !target.Host.Equals(entry.AddonId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new McpException("The handle is not a reusable route belonging to its originating Kodi add-on.");
+        }
+
+        var targetToPersist = entry.Target;
+        LearnedRouteParameter? parameter = null;
+        if (sampleValue is not null)
+        {
+            if ((actions & HandleAction.Browse) == 0)
+            {
+                throw new McpException("Parameterized learned routes must originate from a browsable add-on item.");
+            }
+            var normalizedSample = ValidateLearnedRouteInput(sampleValue, "Sample value");
+            targetToPersist = InferSingleInputTemplate(entry.Target, normalizedSample);
+            parameter = new LearnedRouteParameter("input", "string", 200);
+            actions = HandleAction.Browse;
+        }
+
+        var route = await _learnedRoutes.SaveAsync(new LearnedRouteEntry(
+            instance.Alias,
+            entry.AddonId,
+            entry.AddonName,
+            name.Trim(),
+            targetToPersist,
+            entry.Media,
+            entry.Kind,
+            actions,
+            _timeProvider.GetUtcNow(),
+            parameter), cancellationToken);
+        return CreateLearnedRouteSummary(route);
+    }
+
+    public async Task<LearnedRoutePageSummary> ListAddonRoutesAsync(string? alias, CancellationToken cancellationToken)
+    {
+        var instance = _registry.Resolve(alias);
+        var routes = await _learnedRoutes.ListAsync(instance.Alias, cancellationToken);
+        return new LearnedRoutePageSummary(instance.Alias, routes.Select(CreateLearnedRouteSummary).ToArray());
+    }
+
+    public BoundLearnedRouteSummary BindAddonRoute(string? alias, string handle, string input)
+    {
+        var instance = _registry.Resolve(alias);
+        var entry = _handles.Resolve(handle, instance.Alias, HandleAction.BindLearnedRoute);
+        var normalizedInput = ValidateLearnedRouteInput(input, "Route input");
+        var resultActions = entry.TemplateResultActions & (HandleAction.Browse | HandleAction.Play);
+        if (entry.AddonId is null || entry.LearnedRouteName is null || resultActions == HandleAction.None ||
+            CountOccurrences(entry.Target, FileLearnedRouteStore.InputPlaceholder) != 1)
+        {
+            throw new McpException("The learned-route handle does not contain a valid input template.");
+        }
+        var target = entry.Target.Replace(
+            FileLearnedRouteStore.InputPlaceholder, Uri.EscapeDataString(normalizedInput), StringComparison.Ordinal);
+        if (!Uri.TryCreate(target, UriKind.Absolute, out var parsed) ||
+            !parsed.Scheme.Equals("plugin", StringComparison.OrdinalIgnoreCase) ||
+            !parsed.Host.Equals(entry.AddonId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new McpException("The learned route could not produce a valid add-on target.");
+        }
+        var boundHandle = _handles.Create(instance.Alias, target, entry.Media, entry.Kind, resultActions,
+            entry.AddonId, entry.AddonName);
+        return new BoundLearnedRouteSummary(
+            instance.Alias,
+            entry.LearnedRouteName,
+            (resultActions & HandleAction.Browse) != 0,
+            (resultActions & HandleAction.Play) != 0,
+            boundHandle);
+    }
+
+    public async Task<LearnedRouteMutationResult> ForgetAddonRouteAsync(
+        string? alias,
+        string handle,
+        CancellationToken cancellationToken)
+    {
+        EnsureLearnedRouteWrites();
+        var instance = _registry.Resolve(alias);
+        var entry = _handles.Resolve(handle, instance.Alias, HandleAction.ManageLearnedRoute);
+        if (entry.AddonId is null || entry.LearnedRouteName is null)
+        {
+            throw new McpException("The learned-route handle does not contain route management metadata.");
+        }
+        var removed = await _learnedRoutes.DeleteAsync(
+            instance.Alias, entry.AddonId, entry.LearnedRouteName, cancellationToken);
+        return new LearnedRouteMutationResult(instance.Alias, entry.LearnedRouteName, removed);
     }
 
     public async Task<PageSummary> BrowseAsync(
@@ -715,7 +830,8 @@ public sealed partial class KodiService
                 writer.WriteStartObject(); writer.WriteNumber("start", start); writer.WriteNumber("end", end); writer.WriteEndObject();
                 WriteSort(writer);
             }, cancellationToken);
-            return ParseItemPage(instance.Alias, result, "files", entry.Media, start);
+            return ParseItemPage(instance.Alias, result, "files", entry.Media, start,
+                addonId: entry.AddonId, addonName: entry.AddonName);
         }
         catch (KodiRpcException exception)
         {
@@ -893,6 +1009,14 @@ public sealed partial class KodiService
         if (!enabled) throw new McpException($"{operation} is disabled. Set Kodi:Controls:{gate}=true to enable it.");
     }
 
+    private void EnsureLearnedRouteWrites()
+    {
+        if (!_options.LearnedRoutes.AllowWrite)
+        {
+            throw new McpException("Learned-route writes are disabled. Set Kodi:LearnedRoutes:AllowWrite=true to enable saving and forgetting routes.");
+        }
+    }
+
     private static void ValidatePlayerId(int playerId)
     {
         if (playerId is < 0 or > 2) throw new McpException("Player ID must be 0, 1, or 2 and should come from kodi_get_status.");
@@ -927,7 +1051,9 @@ public sealed partial class KodiService
         string media,
         int fallbackStart,
         int? clientSkip = null,
-        int? clientTake = null)
+        int? clientTake = null,
+        string? addonId = null,
+        string? addonName = null)
     {
         var items = new List<MediaItemSummary>();
         var sourceCount = 0;
@@ -936,7 +1062,7 @@ public sealed partial class KodiService
             sourceCount = values.GetArrayLength();
             var selected = values.EnumerateArray().Skip(clientSkip ?? 0);
             if (clientTake is not null) selected = selected.Take(clientTake.Value);
-            foreach (var value in selected) items.Add(ParseItem(alias, value, media, property));
+            foreach (var value in selected) items.Add(ParseItem(alias, value, media, property, addonId, addonName));
         }
         var limits = GetLimits(result, fallbackStart, sourceCount);
         if (clientSkip is not null)
@@ -946,7 +1072,13 @@ public sealed partial class KodiService
         return new PageSummary(alias, limits.Start, limits.End, limits.Total, items);
     }
 
-    private MediaItemSummary ParseItem(string alias, JsonElement item, string media, string? context = null)
+    private MediaItemSummary ParseItem(
+        string alias,
+        JsonElement item,
+        string media,
+        string? context = null,
+        string? addonId = null,
+        string? addonName = null)
     {
         var target = GetString(item, "file") ?? GetString(item, "path");
         var fileType = GetString(item, "filetype");
@@ -974,7 +1106,15 @@ public sealed partial class KodiService
         else if (!string.IsNullOrWhiteSpace(target))
         {
             var actions = (isFolder ? HandleAction.Browse : HandleAction.None) | (isPlayable ? HandleAction.Play : HandleAction.None);
-            if (actions != HandleAction.None) handle = _handles.Create(alias, target, media, type ?? "item", actions);
+            if (actions != HandleAction.None)
+            {
+                var targetAddonId = GetPluginAddonId(target);
+                var effectiveAddonId = targetAddonId ?? addonId;
+                var effectiveAddonName = targetAddonId is null || targetAddonId.Equals(addonId, StringComparison.OrdinalIgnoreCase)
+                    ? addonName
+                    : null;
+                handle = _handles.Create(alias, target, media, type ?? "item", actions, effectiveAddonId, effectiveAddonName);
+            }
         }
 
         var artists = item.TryGetProperty("artist", out var artist) && artist.ValueKind == JsonValueKind.Array
@@ -1011,6 +1151,109 @@ public sealed partial class KodiService
             isFolder,
             isPlayable,
             handle);
+    }
+
+    private LearnedRouteSummary CreateLearnedRouteSummary(LearnedRouteEntry route)
+    {
+        var actions = HandleAction.ManageLearnedRoute |
+                      (route.Parameter is null ? route.Actions : HandleAction.BindLearnedRoute);
+        var handle = _handles.Create(route.InstanceAlias, route.Target, route.Media, route.Kind, actions,
+            route.AddonId, route.AddonName, route.Name,
+            route.Parameter is null ? HandleAction.None : route.Actions);
+        return new LearnedRouteSummary(
+            _safeText.Clean(route.AddonName),
+            _safeText.Clean(route.Name, 100) ?? "learned-route",
+            _safeText.Clean(route.Media, 30) ?? "files",
+            _safeText.Clean(route.Kind, 80) ?? "item",
+            (route.Actions & HandleAction.Browse) != 0,
+            (route.Actions & HandleAction.Play) != 0,
+            route.Parameter is not null,
+            route.Parameter?.Name,
+            route.Parameter?.MaximumLength,
+            route.SavedUtc,
+            handle);
+    }
+
+    private static string InferSingleInputTemplate(string target, string sampleValue)
+    {
+        if (target.Contains(FileLearnedRouteStore.InputPlaceholder, StringComparison.Ordinal))
+        {
+            throw new McpException("The observed add-on route already contains the reserved input marker.");
+        }
+        var queryStart = target.IndexOf('?');
+        var queryEnd = queryStart >= 0 ? target.IndexOf('#', queryStart + 1) : -1;
+        if (queryStart < 0) throw new McpException("The observed add-on route has no query value matching the supplied sample.");
+        if (queryEnd < 0) queryEnd = target.Length;
+
+        var matches = new List<(int Start, int Length)>();
+        var segmentStart = queryStart + 1;
+        while (segmentStart <= queryEnd)
+        {
+            var separator = target.IndexOf('&', segmentStart, queryEnd - segmentStart);
+            var segmentEnd = separator >= 0 ? separator : queryEnd;
+            var equals = target.IndexOf('=', segmentStart, segmentEnd - segmentStart);
+            if (equals >= 0)
+            {
+                var rawKey = target[segmentStart..equals];
+                var valueStart = equals + 1;
+                var rawValue = target[valueStart..segmentEnd];
+                string decodedKey;
+                string decodedValue;
+                try
+                {
+                    decodedKey = Uri.UnescapeDataString(rawKey.Replace("+", " ", StringComparison.Ordinal));
+                    decodedValue = Uri.UnescapeDataString(rawValue.Replace("+", " ", StringComparison.Ordinal));
+                }
+                catch (UriFormatException)
+                {
+                    throw new McpException("The observed add-on route contains invalid query encoding.");
+                }
+                if (FileLearnedRouteStore.IsApprovedTextInputKey(decodedKey) && decodedValue.Equals(sampleValue, StringComparison.Ordinal))
+                {
+                    matches.Add((valueStart, rawValue.Length));
+                }
+            }
+            if (separator < 0) break;
+            segmentStart = separator + 1;
+        }
+
+        if (matches.Count != 1)
+        {
+            throw new McpException("The sample value must match exactly one complete query value in the observed add-on route.");
+        }
+        var match = matches[0];
+        return string.Concat(target.AsSpan(0, match.Start), FileLearnedRouteStore.InputPlaceholder,
+            target.AsSpan(match.Start + match.Length));
+    }
+
+    private static string ValidateLearnedRouteInput(string value, string description)
+    {
+        var normalized = value.Trim();
+        if (normalized.Length is < 1 or > 200 || normalized.Any(char.IsControl))
+        {
+            throw new McpException($"{description} must be 1-200 printable characters.");
+        }
+        return normalized;
+    }
+
+    private static int CountOccurrences(string value, string search)
+    {
+        var count = 0;
+        var offset = 0;
+        while ((offset = value.IndexOf(search, offset, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            offset += search.Length;
+        }
+        return count;
+    }
+
+    private static string? GetPluginAddonId(string target)
+    {
+        if (!Uri.TryCreate(target, UriKind.Absolute, out var uri) ||
+            !uri.Scheme.Equals("plugin", StringComparison.OrdinalIgnoreCase) ||
+            !AddonId().IsMatch(uri.Host)) return null;
+        return uri.Host;
     }
 
     private (int Start, int End) Bounds(int page, int pageSize)

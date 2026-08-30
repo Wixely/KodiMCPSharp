@@ -11,6 +11,7 @@ public sealed class KodiOptions
     public bool ReadOnly { get; set; } = true;
     public KodiControlOptions Controls { get; set; } = new();
     public HandleOptions Handles { get; set; } = new();
+    public LearnedRouteOptions LearnedRoutes { get; set; } = new();
     public List<KodiInstanceOptions> Instances { get; set; } = [];
 }
 
@@ -30,6 +31,13 @@ public sealed class HandleOptions
 {
     public int LifetimeMinutes { get; set; } = 15;
     public int Capacity { get; set; } = 5000;
+}
+
+public sealed class LearnedRouteOptions
+{
+    public string Directory { get; set; } = "kodimcpsharp_data/addon-routes";
+    public bool AllowWrite { get; set; }
+    public int MaximumRoutesPerAddon { get; set; } = 100;
 }
 
 public sealed class KodiInstanceOptions
