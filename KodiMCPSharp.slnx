@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/KodiMCPSharp/KodiMCPSharp.csproj" />
+  <Project Path="tests/KodiMCPSharp.Tests/KodiMCPSharp.Tests.csproj" />
+</Solution>

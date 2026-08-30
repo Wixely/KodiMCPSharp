@@ -1,0 +1,23 @@
+[Unit]
+Description=KodiMCPSharp MCP service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kodimcp
+Group=kodimcp
+WorkingDirectory=/opt/kodimcpsharp
+ExecStart=/opt/kodimcpsharp/KodiMCPSharp
+Environment=DOTNET_ENVIRONMENT=Production
+EnvironmentFile=-/etc/kodimcpsharp/environment
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/kodimcpsharp/logs
+
+[Install]
+WantedBy=multi-user.target

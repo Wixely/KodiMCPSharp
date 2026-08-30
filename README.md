@@ -1,75 +1,158 @@
 # KodiMCPSharp
 
-- Status: Local planning repository; implementation not started
-- Created: 2026-08-30
-- Owner: Wixely
-- Service family: Wixely MCPSharp
-- Intended repository: `https://github.com/Wixely/KodiMCPSharp` (not yet created)
-- Intended license: MIT
+KodiMCPSharp is a read-first MCP server for inspecting, browsing, and controlling media on one or more Kodi instances through Kodi's supported JSON-RPC HTTP interface. It is written in C# for .NET 10 and exposes a stateless Streamable HTTP MCP endpoint.
 
-KodiMCPSharp will be an independent C# and .NET 10 MCP server for structured Kodi discovery, library browsing, add-on traversal, player inspection, and guarded playback control. It will use Kodi's supported remote interfaces and work with Kodi on any supported host operating system.
+Status: browsing, guarded playback, player controls, seeking, volume, stream selection, playback modes, and playlist mutations are implemented. Every state-changing category remains disabled by default and has its own deployment gate.
 
-## Goals
+## Available tools
 
-- Connect to one or more configured Kodi instances by stable operator-defined alias.
-- Report Kodi availability, version/capabilities, active players, now-playing metadata, progress, streams, volume, and playback state.
-- Search and browse video, music, pictures, favourites, playlists, sources, and other supported Kodi directories with bounded results.
-- List installed/enabled add-ons whose metadata Kodi exposes.
-- Traverse compatible installed add-ons and `plugin://` directory items without requiring add-on-specific MCP servers.
-- Play an item returned by a prior search/browse operation using an opaque short-lived handle rather than an agent-constructed path.
-- Provide guarded playback, seek, track/stream, volume, playlist, and bounded Kodi-navigation operations.
-- Keep viewing data and credentials inside the operator's network with no cloud account or telemetry requirement.
+| Tool | Purpose |
+| --- | --- |
+| `kodi_list_instances` | Probe configured aliases and report JSON-RPC availability/version |
+| `kodi_get_capabilities` | Report the effective read-only policy, tool catalogue, and handle policy |
+| `kodi_get_status` | Read application volume/mute state and active player summaries |
+| `kodi_search_library` | Search movies and TV shows by title, year, and genre; search episodes, songs, or albums by name |
+| `kodi_list_genres` | List valid movie, TV-show, or music genres |
+| `kodi_list_recent` | List recently added movies, episodes, albums, or songs |
+| `kodi_list_continue_watching` | List in-progress movies, episodes, or TV shows with resume state |
+| `kodi_browse_tv_show` | Traverse an opaque TV-show handle into seasons and playable episodes |
+| `kodi_list_favourites` | List safe favourite summaries |
+| `kodi_list_addons` | List enabled add-ons and issue handles for browsable roots |
+| `kodi_browse` | List a closed source root or traverse a server-issued folder handle |
+| `kodi_play_item` | Play one server-issued playable handle and verify observed player state; disabled by default |
+| `kodi_player_control` | Pause, resume, toggle, stop, next, or previous |
+| `kodi_seek` | Seek by percentage, bounded relative seconds, or Kodi step |
+| `kodi_set_volume` | Set volume and/or mute and verify the observed values |
+| `kodi_select_stream` | Select an enumerated audio, video, or subtitle stream; turn subtitles off |
+| `kodi_set_playback_mode` | Set repeat (`off`, `one`, `all`) and/or shuffle |
+| `kodi_playlist_add` | Add a server-issued playable handle to the audio or video playlist |
+| `kodi_playlist_remove` | Remove a validated zero-based playlist position |
+| `kodi_playlist_clear` | Clear the audio or video playlist |
 
-## MCPSharp family baseline
+No tool accepts a JSON-RPC method, JSON payload, endpoint, filesystem path, URL, add-on ID, or `plugin://` path. Kodi-originated targets remain in memory behind random, instance-scoped handles that expire after 15 minutes by default and do not survive restart.
 
-KodiMCPSharp is intended to be a first-class, independently deployable service in the public [Wixely MCPSharp family](https://github.com/Wixely). It should follow the established family shape while retaining its own source, configuration, release, and runtime boundaries.
+### Movie and TV-show search
 
-Use the current public services as implementation references rather than dependencies:
+`kodi_search_library` accepts optional `query`, `year`, and `genre` filters for the `movies` and `tvshows` domains. At least one filter is required. Multiple supplied filters are combined with AND, so `query="alien"`, `year=1979`, and `genre="science fiction"` returns only entries matching all three. Kodi evaluates title and genre using its `contains` operator; year uses exact matching. Results include title, year, genres, safe playback metadata, and an opaque playable handle where Kodi supplies a playable target.
 
-- [HomeAssistantMCPSharp](https://github.com/Wixely/HomeAssistantMCPSharp) for a typed HTTP upstream client, per-feature toggles, allow/deny policies, media-oriented tools, and a broad but curated tool catalogue.
-- [BambuMCPSharp](https://github.com/Wixely/BambuMCPSharp) for read-only defaults, granular control gates, structured device state, health reporting, Docker/service packaging, and release conventions.
-- [RemoteAdminMCPSharp](https://github.com/Wixely/RemoteAdminMCPSharp) for named remote targets, protected configuration, guarded state-changing operations, service hosting, and redacted auditing/logging boundaries.
-- [MCPHub](https://github.com/Wixely/MCPHub) for managed-service metadata, install/update expectations, configuration preservation, process health, and future catalogue integration.
+The existing episode, song, and album searches continue to use `query`; year and genre filters are rejected for those domains rather than being silently ignored.
 
-The initial framework baseline should match the current family: .NET 10, `Microsoft.NET.Sdk`, ASP.NET Core through `Microsoft.AspNetCore.App`, `ModelContextProtocol.AspNetCore` with Streamable HTTP, the .NET Generic Host, `Microsoft.Extensions.Hosting.WindowsServices`, `System.Text.Json`, centrally managed package versions, Serilog console/rolling-file logging, and xUnit-based tests. Recheck the current family versions and conventions when scaffolding rather than copying stale package numbers.
+`kodi_list_genres` discovers valid genre names before searching. `kodi_list_recent` and `kodi_list_continue_watching` provide bounded discovery views without requiring a search term. TV-show results carry an opaque library handle; pass it to `kodi_browse_tv_show` to list seasons, then pass a returned season handle to the same tool to list playable episodes. Kodi database identifiers and episode paths remain server-side.
 
-## Platform boundary
+## Requirements
 
-- No host operating-system administration, machine power control, application launching, input switching, or non-Kodi application control.
-- KodiMCPSharp must be deployable and useful with Kodi on any host platform supported by the selected Kodi remote interfaces.
-- All runtime behavior must originate from Kodi capabilities and Kodi-owned state.
+- .NET 10 SDK to build; published self-contained builds do not require an installed runtime.
+- Kodi with **Allow control of Kodi via HTTP** enabled.
+- Network access from KodiMCPSharp to Kodi's configured webserver.
+- Kodi webserver authentication is strongly recommended. Never expose Kodi's control interfaces directly to the internet.
 
-## Initial non-goals
+The first slice uses JSON-RPC over HTTP POST at Kodi's `/jsonrpc` endpoint. WebSocket notifications are intentionally deferred; status calls read current state directly.
 
-- Installing, updating, enabling, disabling, configuring, or removing add-ons.
-- Adding third-party repositories or installing packages by URL.
-- Purchases, rentals, account changes, library cleaning, deletion, or other consequential administration.
-- Arbitrary Kodi JSON-RPC method invocation or caller-supplied JSON payloads.
-- Returning unredacted `plugin://`, filesystem, credential-bearing, or private media paths.
-- Coordinate-based UI automation, screenshots, OCR, CAPTCHA, browser login, DRM interaction, or modal keyboard workflows.
-- Add-on-specific adapters until generic directory traversal has been tested and shown insufficient for a named priority workflow.
+## Configure
 
-## Add-on compatibility model
+The checked-in [`KodiMCPSharp.json`](src/KodiMCPSharp/KodiMCPSharp.json) contains safe server defaults and no Kodi endpoint or credential. Put private settings in `src/KodiMCPSharp/KodiMCPSharp.Local.json` for local source runs, or beside the published executable as `KodiMCPSharp.Local.json`. That filename is ignored by Git.
 
-- Support add-ons that expose folders and playable items through Kodi's normal structured directory model.
-- Preserve folder/playable distinctions, labels, media types, resume state, artwork references, pagination/context, and available actions when Kodi supplies them safely.
-- Return an explicit unsupported/capability result for custom modal UI, keyboard entry, CAPTCHA, browser authentication, DRM interaction, or other UI-only flows.
-- Redact credentials, tokens, cookies, query parameters, local paths, and private plug-in parameters from results, logs, handles, and audit records.
-- Keep opaque item handles bounded, scoped to one configured Kodi instance, and short-lived.
+Use this local-only shape, replacing every placeholder on the operator machine:
 
-## Safety model
+```json
+{
+  "Server": {
+    "Password": "<set-a-strong-mcp-password-before-network-binding>"
+  },
+  "Kodi": {
+    "DefaultAlias": "living-room",
+    "Instances": [
+      {
+        "Alias": "living-room",
+        "Endpoint": "<absolute-http-or-https-endpoint-ending-in-/jsonrpc>",
+        "Username": "<kodi-webserver-user>",
+        "Password": "<kodi-webserver-password>"
+      }
+    ]
+  }
+}
+```
 
-- Read-only inspection and browsing enabled first.
-- Separate capability gates for playback control, playlist changes, volume, Kodi window navigation, add-on item activation, and later administration.
-- Never expose arbitrary JSON-RPC, raw `plugin://` paths, local filesystem paths, or general-purpose Kodi actions as MCP inputs.
-- Re-read player/application state after control requests and distinguish accepted from observed complete or indeterminate outcomes.
-- Bind locally/conservatively, require protected configuration, and define MCP authentication before network exposure.
+Settings can also come from environment variables with the `KODIMCP_` prefix. Double underscores represent configuration nesting; for example, `KODIMCP_Server__Password` and `KODIMCP_Kodi__Instances__0__Alias`. Prefer a protected environment file or secret injection facility rather than command-line arguments, because command lines may be visible to other users.
 
-## Documentation
+Configuration is validated at startup:
 
-- [Implementation starting plan](PLAN.md)
-- [Repository instructions](AGENTS.md)
+- aliases allow only ASCII letters, digits, `-`, and `_` and are compared case-insensitively;
+- endpoints must be absolute HTTP(S) URIs ending in `/jsonrpc`;
+- a non-loopback MCP bind requires `Server:Password`;
+- page, response-size, timeout, handle-lifetime, and handle-capacity settings have hard bounds;
+- invalid TLS certificates are rejected unless explicitly opted out per instance.
 
-## Recommended next action
+Controls require `Kodi:ReadOnly=false` plus their independent `Kodi:Controls` gate: `AllowPlayback`, `AllowPlayerControl`, `AllowSeek`, `AllowVolume`, `AllowStreamSelection`, `AllowPlaybackModes`, or `AllowPlaylists`. The checked-in defaults keep `ReadOnly=true` and every gate false. Play and playlist-add accept only short-lived handles returned by search/browse; they cannot accept caller-supplied paths or URLs.
 
-Record the first Kodi version and two or three priority installed add-ons, then prove read-only status, active-player inspection, library search, and generic directory traversal before adding playback controls. Owner: Agent.
+The MCP password can be supplied by a client as `Authorization: Bearer <password>` or `X-MCP-Password`. `/healthz` and `/readyz` do not reveal endpoints and remain available without that password.
+
+## Build and run
+
+```powershell
+.\scripts\build.ps1
+.\scripts\test.ps1
+dotnet run --project .\src\KodiMCPSharp\KodiMCPSharp.csproj
+```
+
+The default MCP endpoint is `http://localhost:5712/mcp`. Health endpoints are `/healthz` (process health) and `/readyz` (whether at least one Kodi alias is configured). The service is allowed to start with no Kodi instances so packaging can be smoke-tested safely.
+
+VS Code build, test, run, and debug definitions are included under `.vscode`.
+
+## Publish and deploy
+
+Create a compressed, self-contained single executable plus portable symbols with the PowerShell 5.1-compatible publisher:
+
+```powershell
+.\scripts\publish.ps1 -Runtime win-x64
+.\scripts\publish.ps1 -Runtime linux-x64
+```
+
+NativeAOT is not enabled in this milestone. MCP attribute-based tool discovery still depends on runtime metadata; the release is instead a self-contained single-file executable. NativeAOT should be reconsidered after the MCP boundary is proven with generated metadata.
+
+Windows supports interactive execution and Windows Service hosting. Install the published executable with the service manager of your choice and set its working directory/configuration permissions appropriately.
+
+Linux supports interactive execution and systemd. A hardened starting unit is provided at [`deploy/kodimcpsharp.service`](deploy/kodimcpsharp.service); create the service user, install files under `/opt/kodimcpsharp`, keep secrets in `/etc/kodimcpsharp/environment`, and grant the service user write access only to its log directory.
+
+Docker builds a non-root, self-contained Linux image:
+
+```powershell
+docker compose build
+docker compose up
+```
+
+The compose file publishes only to host loopback. Supply private configuration through a read-only untracked bind mount or protected environment/secret mechanism. Container networking must be able to reach Kodi; do not use public ingress to solve that connectivity.
+
+## Security and privacy
+
+- Media controls are independently gated and globally blocked by read-only mode. Navigation, arbitrary speed/actions, raw playlist targets, picture transforms, add-on activation, input injection, host control, and administration are not registered.
+- The JSON-RPC transport is internal and calls only methods selected by the application; it is not a generic proxy.
+- HTTP responses are time-limited, size-limited, depth-limited, request-ID checked, and classified without logging raw payloads.
+- Ordinary output contains allowlisted summary fields. URI-like values, filesystem paths, control characters, and common credential-bearing strings are redacted.
+- Artwork is represented only as `hasArtwork`; URLs and Kodi image paths are not returned.
+- Basic authentication protects Kodi credentials in transit only when the endpoint uses HTTPS. Use a trusted private network when Kodi is HTTP-only.
+- `AllowInvalidTlsCertificate` is off by default and produces a warning when explicitly enabled.
+
+Do not commit local configuration, logs, endpoints, credentials, media paths, viewing history, real metadata, screenshots, or add-on parameters. See [`SECURITY.md`](SECURITY.md).
+
+## Testing
+
+The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP transport. It covers:
+
+- JSON-RPC request shape, Basic authentication, response correlation, malformed responses, remote errors, authentication failures, and response-size limits;
+- configuration and conservative network binding validation;
+- path/URI redaction;
+- opaque-handle action, expiry, capacity, and cross-instance isolation;
+- add-on handle traversal without returning `plugin://` paths;
+- a fixed 20-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control policy;
+- player actions, seek bounds, volume/mute, enumerated stream selection, repeat/shuffle, and opaque-handle playlist mutations with synthetic postcondition checks;
+- composable movie and TV-show title/year/genre filters, input validation, and safe genre metadata in results;
+- genre discovery, recent and in-progress media views, and opaque TV-show/season hierarchy traversal.
+
+Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux and smoke-publishes `win-x64`, `linux-x64`, and `linux-arm64` artifacts with three-day retention.
+
+## Project status and next action
+
+Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, and TV hierarchy discovery. Live acceptance now covers every new discovery domain and opaque TV show → season → playable episode traversal. Expanded controls and representative add-on traversal remain to be verified live.
+
+See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.

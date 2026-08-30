@@ -1,6 +1,6 @@
 # KodiMCPSharp starting plan
 
-- Status: Ready for investigation and implementation planning
+- Status: Browsing and independently gated media controls implemented; live control and representative add-on acceptance pending
 - Created: 2026-08-30
 - Owner: TBD
 - Target stack: C# and .NET 10
@@ -22,9 +22,24 @@ A trusted MCP client can:
 3. perform bounded library search and directory/favourites browsing;
 4. traverse one compatible installed add-on without receiving a raw plug-in path;
 5. receive opaque short-lived handles for folders and playable items; and
-6. after playback controls are enabled, play one previously returned handle and verify the resulting player state.
+6. after the relevant controls are enabled, play a returned handle and operate player state, seeking, volume, streams, modes, and playlists through bounded semantic tools.
 
-The first slice should remain read-only until connection, pagination, redaction, add-on capability detection, and handle behavior are reliable.
+The browsing slice remained read-only until connection, pagination, redaction, and handle behavior were verified on the target Kodi installation. Guarded play-by-handle was added afterward; add-on compatibility validation remains open.
+
+## Implemented decisions (2026-08-30)
+
+- Use authenticated JSON-RPC HTTP POST for the initial request/response client. WebSocket notifications and reconnect state are deferred until polling behavior is measured on the target.
+- Host a stateless Streamable HTTP MCP endpoint at `/mcp` by default.
+- Allow zero configured instances for safe startup/package testing; tools that need Kodi require a unique default or explicit alias.
+- Refuse non-loopback MCP binding unless a server password is configured.
+- Keep discovered raw targets in memory only behind 192-bit random handles scoped to an alias, allowed action, kind, and expiry. Handles do not survive restart.
+- Return artwork presence only, not Kodi artwork URLs or image paths.
+- Implement library search for movies, TV shows, episodes, songs, and albums; implement favourites, enabled add-ons, sources, and handle-based directory traversal.
+- Support composable title, exact-year, and genre filters for movie and TV-show searches using Kodi's typed filter rules; require at least one filter and return safe genre metadata.
+- Implement bounded genre discovery, recently added views, continue-watching views, and TV show → season → episode traversal. Keep Kodi library identifiers behind action-scoped opaque handles.
+- Keep all control gates false by default. Implement play-by-handle, pause/resume/toggle/stop/next/previous, bounded seek, volume/mute, enumerated stream selection, repeat/shuffle, and handle-based playlist add/remove/clear behind independent gates plus global read-only mode; raw targets remain server-side.
+- Publish as a compressed self-contained single file. Defer NativeAOT because MCP attribute discovery currently relies on runtime metadata.
+- Pin the current MCPSharp-family baseline (`ModelContextProtocol.AspNetCore` 1.4.0 and .NET 10 family packages) after checking the public family repositories on 2026-08-30.
 
 ## Investigation work
 
@@ -142,16 +157,33 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - Which state-changing operations require per-call confirmation in addition to deployment gates?
 - Which initial release and MCPHub catalogue milestone should follow technical acceptance?
 
+## Verification record
+
+- 2026-08-30: Debug and Release builds completed without warnings.
+- 2026-08-30: 50 xUnit tests passed using synthetic Kodi responses and an in-process HTTP transport, including every implemented control category, expanded player stream inventory, structured search, discovery views, TV hierarchy handles, and the live-discovered Kodi episode-field compatibility regression.
+- 2026-08-30: Read-only tool schema checked for raw method, JSON, path, URL, endpoint, and credential inputs.
+- 2026-08-30: Windows `win-x64` self-contained single-file publish, `/healthz`, `/readyz`, MCP initialization, and seven-tool discovery smoke tests passed.
+- 2026-08-30: Live Kodi 21.2.0 on Android with JSON-RPC API 13.5.0 accepted authenticated HTTP status, video/music source browsing, and bounded movie, TV show, episode, song, and album searches. No titles, paths, credentials, or viewing data were recorded.
+- 2026-08-30: Guarded play-by-handle was enabled only in the ignored Android-box profile and live playback returned accepted plus observed-playing postconditions.
+- 2026-08-30: Expanded MCP discovery exposed 16 bounded tools, including nine control tools, with all seven control categories enabled only in the ignored Android-box profile. Live control mutation was not attempted; the Kodi HTTP endpoint was unreachable during the final read-only status check.
+- 2026-08-30: Movie and TV-show search gained optional composable title, exact-year, and genre filters with AND semantics. Synthetic contracts verify Kodi filter serialization and returned genre metadata.
+- 2026-08-30: Added genre discovery, recently added media, continue-watching, and opaque-handle TV show/season browsing. The fixed MCP catalogue now contains 20 bounded tools.
+- 2026-08-30: MCP 2025-06-18 runtime discovery verified all 20 tools and all four new input schemas. The configured Android endpoint accepted a TCP probe but all existing and new JSON-RPC calls failed as unavailable, so live data-contract acceptance remains pending.
+- 2026-08-30: After the Android endpoint recovered, live acceptance passed all three genre domains, all four recent-media domains, all three continue-watching domains, and TV show → season → episode traversal with an opaque playable episode handle. The first pass exposed invalid `year`/`genre` episode detail requests; these were removed to match Kodi's schema and covered by a regression test.
+- Linux runtime, systemd, Docker runtime, and representative add-on behavior remain unverified.
+
 ## Next actions
 
-- [ ] Record the target Kodi version, enabled remote interfaces, authentication mode, and priority add-ons. - Owner: User / Agent
-- [ ] Verify typed status, player, library, favourites, directory, and add-on methods against the target. - Owner: Agent
-- [ ] Define redaction and opaque-handle contracts before returning directory or plug-in results. - Owner: Agent
-- [ ] Build a fake Kodi server and read-only client vertical slice with bounded status/search/browse operations. - Owner: Agent
+- [x] Record the target Kodi version, enabled remote interface, and authentication mode. Priority add-ons remain to be selected. - Owner: User / Agent; completed: 2026-08-30
+- [ ] Verify typed status, player, library, favourites, directory, and add-on methods against the target. - Owner: Agent; target review date: 2026-09-13
+- [x] Define redaction and opaque-handle contracts before returning directory or plug-in results. - Owner: Agent; completed: 2026-08-30
+- [x] Build a fake Kodi transport and read-only client vertical slice with bounded status/search/browse operations. - Owner: Agent; completed: 2026-08-30
 - [ ] Test one simple and one complex installed add-on and document the generic compatibility boundary. - Owner: Agent
-- [ ] Add play-from-handle and basic player controls behind explicit gates, with postcondition checks. - Owner: User / Agent
+- [x] Add play-from-handle and bounded player, seek, volume, stream, mode, and playlist controls behind independent gates with postcondition checks. - Owner: User / Agent; completed: 2026-08-30
+- [x] Add genre, recent, continue-watching, and TV hierarchy discovery without exposing Kodi IDs or paths. - Owner: Agent; completed: 2026-08-30
+- [ ] Run a user-approved live acceptance pass for stop/start, seek, volume, stream, mode, and playlist controls without retaining private media data. - Owner: User / Agent
 - [ ] After technical acceptance, create `Wixely/KodiMCPSharp`, complete the public pre-push review, publish under MIT, and add MCPHub integration as a separately verified milestone. - Owner: User / Agent
 
 ## Recommended next action
 
-Implement the typed read-only client and opaque-handle browse spike against synthetic fixtures, then validate it on the target Kodi installation and two representative add-ons. Owner: Agent.
+Run a user-approved live control acceptance pass, then validate one simple add-on and one UI-heavy add-on without recording private data. Owner: User / Agent; recommended review date: 2026-09-13.

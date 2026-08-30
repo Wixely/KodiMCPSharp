@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "KodiMCPSharp",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/KodiMCPSharp/bin/Debug/net10.0/KodiMCPSharp.dll",
+      "cwd": "${workspaceFolder}/src/KodiMCPSharp",
+      "env": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  ]
+}

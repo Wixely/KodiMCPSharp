@@ -1,0 +1,217 @@
+using System.ComponentModel;
+using System.Text.Json;
+using KodiMCPSharp.Services;
+using ModelContextProtocol.Server;
+
+namespace KodiMCPSharp.Tools;
+
+[McpServerToolType]
+public static class KodiTools
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false,
+    };
+
+    [McpServerTool(Name = "kodi_list_instances"),
+     Description("List configured Kodi aliases and probe their JSON-RPC availability. Endpoints and credentials are never returned.")]
+    public static async Task<string> ListInstances(
+        KodiService service,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListInstancesAsync(cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_get_capabilities"),
+     Description("Show effective KodiMCPSharp features, read-only state, disabled control gates, and opaque-handle policy.")]
+    public static string GetCapabilities(KodiService service) =>
+        JsonSerializer.Serialize(service.GetCapabilities(), JsonOptions);
+
+    [McpServerTool(Name = "kodi_get_status"),
+     Description("Get application volume/mute state plus active players and safe now-playing metadata for one configured Kodi alias.")]
+    public static async Task<string> GetStatus(
+        KodiService service,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.GetStatusAsync(alias, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_search_library"),
+     Description("Search a bounded Kodi library domain. Movies and TV shows support combinable title, year, and genre filters. Returns safe metadata and opaque short-lived item handles; never raw media paths.")]
+    public static async Task<string> SearchLibrary(
+        KodiService service,
+        [Description("Text to find in media titles (1-200 printable characters). Optional when filtering movies or TV shows by year or genre.")] string? query = null,
+        [Description("Closed library domain: movies, tvshows, episodes, songs, or albums.")] string domain = "movies",
+        [Description("Exact release year from 1 to 9999. Supported for movies and tvshows.")] int? year = null,
+        [Description("Genre text to match (1-100 printable characters). Supported for movies and tvshows.")] string? genre = null,
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.SearchLibraryAsync(alias, query, domain, year, genre, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_list_genres"),
+     Description("List bounded, safe genre names from Kodi's movie, TV-show, or music library.")]
+    public static async Task<string> ListGenres(
+        KodiService service,
+        [Description("Closed genre domain: movies, tvshows, or music.")] string domain = "movies",
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListGenresAsync(alias, domain, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_list_recent"),
+     Description("List recently added movies, episodes, albums, or songs with bounded safe metadata and playable handles where available.")]
+    public static async Task<string> ListRecent(
+        KodiService service,
+        [Description("Closed recent-media domain: movies, episodes, albums, or songs.")] string domain = "movies",
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListRecentAsync(alias, domain, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_list_continue_watching"),
+     Description("List in-progress movies, episodes, or TV shows with resume state and bounded safe metadata.")]
+    public static async Task<string> ListContinueWatching(
+        KodiService service,
+        [Description("Closed continue-watching domain: movies, episodes, or tvshows.")] string domain = "movies",
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListContinueWatchingAsync(alias, domain, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_browse_tv_show"),
+     Description("Browse a TV-show handle into seasons, or a season handle into playable episodes. Only server-issued library handles are accepted.")]
+    public static async Task<string> BrowseTvShow(
+        KodiService service,
+        [Description("Opaque TV-show or season handle returned by search, continue-watching, or an earlier TV-show browse.")] string handle,
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.BrowseTvShowAsync(alias, handle, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_list_favourites"),
+     Description("List a bounded page of Kodi favourites with safe metadata and opaque handles where a structured follow-up is supported.")]
+    public static async Task<string> ListFavourites(
+        KodiService service,
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListFavouritesAsync(alias, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_list_addons"),
+     Description("List enabled Kodi add-ons with bounded, redacted metadata. Browsable add-ons receive an opaque root handle.")]
+    public static async Task<string> ListAddons(
+        KodiService service,
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListAddonsAsync(alias, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_browse"),
+     Description("List Kodi sources for a closed media root, or browse a folder/add-on using a server-issued opaque handle. Caller-supplied paths are not accepted.")]
+    public static async Task<string> Browse(
+        KodiService service,
+        [Description("Opaque folder handle from an earlier result. Omit to list the selected root's sources.")] string? handle = null,
+        [Description("Closed source root used when handle is omitted: video, music, pictures, files, or programs.")] string root = "video",
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.BrowseAsync(alias, handle, root, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_play_item"),
+     Description("Play one server-issued playable handle and verify the observed player state. Requires Kodi:ReadOnly=false and Kodi:Controls:AllowPlayback=true; both block playback by default.")]
+    public static async Task<string> PlayItem(
+        KodiService service,
+        [Description("Opaque playable handle returned by kodi_search_library or kodi_browse. Raw paths and URLs are not accepted.")] string handle,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlayItemAsync(alias, handle, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_player_control"),
+     Description("Pause, resume, toggle, stop, or skip the active item using a player ID from kodi_get_status. Requires the player-control gate.")]
+    public static async Task<string> PlayerControl(
+        KodiService service,
+        [Description("Player ID from kodi_get_status: 0, 1, or 2.")] int playerId,
+        [Description("Closed action: pause, resume, toggle, stop, next, or previous.")] string action,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlayerControlAsync(alias, playerId, action, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_seek"),
+     Description("Seek by bounded percentage, relative seconds, or a Kodi step. Requires the seek gate.")]
+    public static async Task<string> Seek(
+        KodiService service,
+        [Description("Player ID from kodi_get_status: 0, 1, or 2.")] int playerId,
+        [Description("Closed mode: percentage, relative_seconds, smallforward, smallbackward, bigforward, or bigbackward.")] string mode,
+        [Description("Percentage (0-100) or whole relative seconds (-86400 to 86400); ignored for step modes.")] double value = 0,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.SeekAsync(alias, playerId, mode, value, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_set_volume"),
+     Description("Set bounded application volume, mute state, or both and verify the observed values. Requires the volume gate.")]
+    public static async Task<string> SetVolume(
+        KodiService service,
+        [Description("Volume from 0 to 100. Omit to leave unchanged.")] int? volume = null,
+        [Description("Mute state. Omit to leave unchanged.")] bool? muted = null,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.SetVolumeAsync(alias, volume, muted, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_select_stream"),
+     Description("Select an enumerated audio, video, or subtitle stream reported by kodi_get_status. Requires the stream-selection gate.")]
+    public static async Task<string> SelectStream(
+        KodiService service,
+        [Description("Player ID from kodi_get_status: 0, 1, or 2.")] int playerId,
+        [Description("Closed stream kind: audio, video, or subtitle.")] string kind,
+        [Description("Stream index reported by kodi_get_status; -1 turns subtitles off.")] int index,
+        [Description("Enable subtitles after selecting a subtitle stream.")] bool enableSubtitles = true,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.SelectStreamAsync(alias, playerId, kind, index, enableSubtitles, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_set_playback_mode"),
+     Description("Set repeat and/or shuffle for a player and verify the observed mode. Requires the playback-modes gate.")]
+    public static async Task<string> SetPlaybackMode(
+        KodiService service,
+        [Description("Player ID from kodi_get_status: 0, 1, or 2.")] int playerId,
+        [Description("Repeat mode: off, one, or all. Omit to leave unchanged.")] string? repeat = null,
+        [Description("Shuffle state. Omit to leave unchanged.")] bool? shuffled = null,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.SetPlaybackModeAsync(alias, playerId, repeat, shuffled, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_playlist_add"),
+     Description("Add a server-issued playable handle to Kodi's audio or video playlist. Requires the playlists gate.")]
+    public static async Task<string> PlaylistAdd(
+        KodiService service,
+        [Description("Opaque playable handle from kodi_search_library or kodi_browse.")] string handle,
+        [Description("Closed playlist media: audio or video.")] string media,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlaylistAddAsync(alias, handle, media, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_playlist_remove"),
+     Description("Remove one zero-based position from Kodi's audio or video playlist. Requires the playlists gate.")]
+    public static async Task<string> PlaylistRemove(
+        KodiService service,
+        [Description("Closed playlist media: audio or video.")] string media,
+        [Description("Zero-based playlist position.")] int position,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlaylistRemoveAsync(alias, media, position, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_playlist_clear"),
+     Description("Clear Kodi's audio or video playlist. Requires the playlists gate.")]
+    public static async Task<string> PlaylistClear(
+        KodiService service,
+        [Description("Closed playlist media: audio or video.")] string media,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlaylistClearAsync(alias, media, cancellationToken), JsonOptions);
+}

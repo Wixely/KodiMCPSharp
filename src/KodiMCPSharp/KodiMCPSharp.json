@@ -1,0 +1,50 @@
+{
+  "Server": {
+    "Host": "localhost",
+    "Port": 5712,
+    "Path": "/mcp",
+    "Password": ""
+  },
+  "Kodi": {
+    "DefaultAlias": "",
+    "ReadOnly": true,
+    "Controls": {
+      "AllowPlayback": false,
+      "AllowPlayerControl": false,
+      "AllowSeek": false,
+      "AllowVolume": false,
+      "AllowStreamSelection": false,
+      "AllowPlaybackModes": false,
+      "AllowPlaylists": false
+    },
+    "RequestTimeoutSeconds": 10,
+    "MaximumResponseBytes": 2097152,
+    "MaximumPageSize": 50,
+    "Handles": {
+      "LifetimeMinutes": 15,
+      "Capacity": 5000
+    },
+    "Instances": []
+  },
+  "Serilog": {
+    "MinimumLevel": {
+      "Default": "Information",
+      "Override": {
+        "Microsoft": "Warning",
+        "System.Net.Http.HttpClient": "Warning"
+      }
+    },
+    "WriteTo": [
+      { "Name": "Console" },
+      {
+        "Name": "File",
+        "Args": {
+          "path": "logs/kodimcp-.log",
+          "rollingInterval": "Day",
+          "retainedFileCountLimit": 7,
+          "shared": true
+        }
+      }
+    ]
+  }
+}
