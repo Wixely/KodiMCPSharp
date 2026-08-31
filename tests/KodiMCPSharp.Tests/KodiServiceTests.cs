@@ -612,6 +612,67 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task ListUpNext_SelectsPartialThenFirstUnwatchedAfterLatestWatched()
+    {
+        const string partialTarget = "synthetic-partial-next";
+        const string unwatchedTarget = "synthetic-unwatched-next";
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetInProgressTVShows" => Element("""
+                {"limits":{"start":0,"end":2,"total":2},"tvshows":[
+                  {"tvshowid":2,"label":"Show B","lastplayed":"2026-08-31 12:00:00"},
+                  {"tvshowid":1,"label":"Show A","lastplayed":"2026-08-30 12:00:00"}
+                ]}
+                """),
+            "VideoLibrary.GetEpisodes" => GetEpisodesResponse(write, partialTarget, unwatchedTarget),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.ListUpNextAsync("room", 10, TestContext.Current.CancellationToken);
+
+        Assert.Collection(result.Shows,
+            show =>
+            {
+                Assert.Equal("Show B", show.Show);
+                Assert.Equal("resume-partially-watched", show.SelectionBasis);
+                Assert.Equal(120, show.ResumePositionSeconds);
+            },
+            show =>
+            {
+                Assert.Equal("Show A", show.Show);
+                Assert.Equal(2, show.EpisodeNumber);
+                Assert.Equal("first-unwatched-after-latest-watched", show.SelectionBasis);
+            });
+        var serialized = JsonSerializer.Serialize(result);
+        Assert.DoesNotContain(partialTarget, serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain(unwatchedTarget, serialized, StringComparison.Ordinal);
+    }
+
+    private static JsonElement GetEpisodesResponse(Action<Utf8JsonWriter>? write, string partialTarget, string unwatchedTarget)
+    {
+        var tvShowId = 0;
+        CaptureParameters(write, parameters => tvShowId = parameters.GetProperty("tvshowid").GetInt32(), "{}");
+        return Element(tvShowId switch
+        {
+            1 => $$$"""
+                {"limits":{"start":0,"end":3,"total":3},"episodes":[
+                  {"label":"Earlier gap","season":0,"episode":1,"playcount":0,"file":"synthetic-gap"},
+                  {"label":"Watched A","season":1,"episode":1,"playcount":1,"file":"synthetic-watched-a"},
+                  {"label":"Next A","season":1,"episode":2,"playcount":0,"file":"{{{unwatchedTarget}}}"}
+                ]}
+                """,
+            2 => $$$"""
+                {"limits":{"start":0,"end":2,"total":2},"episodes":[
+                  {"label":"Watched B","season":2,"episode":2,"playcount":1,"file":"synthetic-watched-b"},
+                  {"label":"Partial B","season":2,"episode":3,"playcount":0,"resume":{"position":120},"file":"{{{partialTarget}}}"}
+                ]}
+                """,
+            _ => throw new InvalidOperationException($"Unexpected TV show id {tvShowId}."),
+        });
+    }
+
+    [Fact]
     public async Task EpisodeResults_ReportExplicitWatchState()
     {
         var fake = new FakeKodiClient((method, _) => method switch
@@ -1137,6 +1198,43 @@ public sealed class KodiServiceTests
 
         Assert.Equal("favourite", result.Source);
         Assert.Equal(target, openedTarget);
+        Assert.True(result.Observed);
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlayRandomMovie_UsesClosedFiltersRandomSortAndObservedPlayback()
+    {
+        const string target = "synthetic-random-movie";
+        string? sortMethod = null;
+        string[]? filterFields = null;
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetMovies" => CaptureParameters(write, root =>
+            {
+                sortMethod = root.GetProperty("sort").GetProperty("method").GetString();
+                filterFields = root.GetProperty("filter").GetProperty("and").EnumerateArray()
+                    .Select(filter => filter.GetProperty("field").GetString()!).ToArray();
+            }, $$$"""
+                {"movies":[{"label":"Random","year":2025,"file":"{{{target}}}"}]}
+                """),
+            "Player.Open" => CaptureParameters(write,
+                root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayRandomAsync("room", "movies", "unwatched", 2025, "Comedy", 7,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("random", sortMethod);
+        Assert.NotNull(filterFields);
+        Assert.Equal(["playcount", "year", "genre", "rating"], filterFields);
+        Assert.Equal(target, openedTarget);
+        Assert.Equal("random-filter-match", result.SelectionBasis);
         Assert.True(result.Observed);
         Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
     }

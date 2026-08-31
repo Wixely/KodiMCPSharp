@@ -4,7 +4,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 58080,
     [ValidateRange(1, 1000)]
-    [int]$ExpectedToolCount = 39,
+    [int]$ExpectedToolCount = 41,
     [switch]$ProbeAddons,
     [switch]$AllowLocalConfiguration,
     [ValidateRange(0, 3)]
@@ -26,7 +26,8 @@ param(
     [ValidateLength(0, 200)]
     [string]$ExistingRouteTestValue = '',
     [switch]$ForgetExistingRoute,
-    [switch]$ProbeQueues
+    [switch]$ProbeQueues,
+    [switch]$ProbeUpNext
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,6 +99,8 @@ try {
     if (-not ($tools | Where-Object name -eq 'kodi_list_recently_watched_movies')) { throw 'Packaged server is missing kodi_list_recently_watched_movies.' }
     if (-not ($tools | Where-Object name -eq 'kodi_get_queue')) { throw 'Packaged server is missing kodi_get_queue.' }
     if (-not ($tools | Where-Object name -eq 'kodi_move_queue_item')) { throw 'Packaged server is missing kodi_move_queue_item.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_list_up_next')) { throw 'Packaged server is missing kodi_list_up_next.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_play_random')) { throw 'Packaged server is missing kodi_play_random.' }
     $localConfigurationIncluded = Test-Path (Join-Path $publishDirectory 'KodiMCPSharp.Local.json')
     if ($localConfigurationIncluded -and -not $AllowLocalConfiguration) { throw 'Private local configuration was included in the package.' }
 
@@ -401,6 +404,24 @@ try {
             $summary["$($queueMedia)QueueTotal"] = $queuePage.total
             $summary["$($queueMedia)QueueReturned"] = @($queuePage.items).Count
         }
+    }
+    if ($ProbeUpNext) {
+        if ($health.configuredInstances -lt 1) { throw 'Up-next probing requires a configured instance.' }
+        $upNextCall = @{
+            jsonrpc = '2.0'
+            id = 110
+            method = 'tools/call'
+            params = @{ name = 'kodi_list_up_next'; arguments = @{ limit = 10 } }
+        } | ConvertTo-Json -Depth 6 -Compress
+        $upNextResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/mcp" `
+            -Method Post -ContentType 'application/json' -Headers $headers -Body $upNextCall -TimeoutSec 30
+        $upNextDataLine = $upNextResponse.Content -split "`n" | Where-Object { $_ -like 'data:*' } | Select-Object -Last 1
+        $upNextJson = if ($upNextDataLine) { $upNextDataLine.Substring(5).Trim() } else { $upNextResponse.Content }
+        $upNextPayload = $upNextJson | ConvertFrom-Json
+        if ($upNextPayload.error -or $upNextPayload.result.isError) { throw 'Up-next inspection failed.' }
+        $upNextResult = $upNextPayload.result.content[0].text | ConvertFrom-Json
+        $summary.UpNextReturned = $upNextResult.returned
+        $summary.UpNextScannedEpisodes = $upNextResult.scannedEpisodes
     }
 
     [pscustomobject]$summary

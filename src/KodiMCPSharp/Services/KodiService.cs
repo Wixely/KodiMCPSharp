@@ -20,6 +20,7 @@ public sealed partial class KodiService
         "kodi_list_instances", "kodi_get_capabilities", "kodi_get_status",
         "kodi_search_library", "kodi_list_genres", "kodi_list_recent", "kodi_list_continue_watching",
         "kodi_list_recently_watched_movies", "kodi_list_recently_watched_shows",
+        "kodi_list_up_next",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
         "kodi_get_queue",
@@ -80,7 +81,7 @@ public sealed partial class KodiService
             "kodi_playlist_remove", "kodi_playlist_clear", "kodi_move_queue_item", "kodi_show_fullscreen_video",
             "kodi_save_addon_route", "kodi_forget_addon_route", "kodi_set_episode_watch_state",
             "kodi_bulk_set_episode_watch_state", "kodi_play_movie", "kodi_play_episode", "kodi_play_next_episode",
-            "kodi_resume",
+            "kodi_play_random", "kodi_resume",
             "kodi_add_favourite", "kodi_remove_favourite",
         ],
         ControlGates: new Dictionary<string, bool>
@@ -867,6 +868,149 @@ public sealed partial class KodiService
             var limits = GetLimits(result, 0, movies.Length);
             return new RecentlyWatchedMovieResult(
                 instance.Alias, limit, items.Length, limits.Total > movies.Length, items);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<UpNextShowResult> ListUpNextAsync(
+        string? alias,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (limit is < 1 or > 50) throw new McpException("Limit must be between 1 and 50.");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var result = await instance.Client.CallAsync("VideoLibrary.GetInProgressTVShows", writer =>
+            {
+                WriteStringArray(writer, "properties", ["title", "lastplayed", "episode", "watchedepisodes"]);
+                WriteLimits(writer, 0, 50);
+                WriteSort(writer, "lastplayed", "descending");
+            }, cancellationToken);
+            var tvShows = GetArray(result, "tvshows");
+            var tvShowLimits = GetLimits(result, 0, tvShows.Length);
+            var shows = new List<UpNextShowSummary>();
+            var scannedEpisodes = 0;
+            var scanCapped = tvShowLimits.Total > tvShows.Length;
+            foreach (var tvShow in tvShows)
+            {
+                if (shows.Count >= limit) break;
+                if (GetInt(tvShow, "tvshowid") is not { } tvShowId) continue;
+                var showTitle = GetString(tvShow, "title") ?? GetString(tvShow, "label");
+                if (string.IsNullOrWhiteSpace(showTitle)) continue;
+                var episodeResult = await instance.Client.CallAsync("VideoLibrary.GetEpisodes", writer =>
+                {
+                    writer.WriteNumber("tvshowid", tvShowId);
+                    WriteStringArray(writer, "properties",
+                        ["title", "showtitle", "season", "episode", "playcount", "resume", "file"]);
+                    WriteLimits(writer, 0, MaximumEpisodesPerTvShow);
+                    WriteSort(writer, "episode", "ascending");
+                }, cancellationToken);
+                var episodes = GetArray(episodeResult, "episodes");
+                scannedEpisodes += episodes.Length;
+                var episodeLimits = GetLimits(episodeResult, 0, episodes.Length);
+                scanCapped |= episodeLimits.Total > episodes.Length;
+                var candidates = episodes.Select((item, index) => CreateEpisodeCandidate(item, index, null, null))
+                    .Where(candidate => candidate is { Season: not null, Episode: not null })
+                    .Cast<EpisodeCandidate>()
+                    .OrderBy(candidate => candidate.Season)
+                    .ThenBy(candidate => candidate.Episode)
+                    .ToArray();
+                if (candidates.Length == 0) continue;
+                var partial = candidates.FirstOrDefault(candidate => candidate.PlayCount <= 0 && candidate.ResumePosition > 0);
+                EpisodeSelection? selection = partial is null ? null : new EpisodeSelection(partial, "resume-partially-watched");
+                if (selection is null)
+                {
+                    var progressed = candidates.Where(candidate => candidate.PlayCount > 0).ToArray();
+                    if (progressed.Length == 0) continue;
+                    var latest = progressed[^1];
+                    var next = candidates.FirstOrDefault(candidate => candidate.PlayCount <= 0 && candidate.ResumePosition <= 0 &&
+                        (candidate.Season > latest.Season || candidate.Season == latest.Season && candidate.Episode > latest.Episode));
+                    if (next is null) continue;
+                    selection = new EpisodeSelection(next, "first-unwatched-after-latest-watched");
+                }
+                shows.Add(new UpNextShowSummary(
+                    _safeText.Clean(showTitle) ?? "[untitled]",
+                    selection.Candidate.Label,
+                    selection.Candidate.Season!.Value,
+                    selection.Candidate.Episode!.Value,
+                    selection.SelectionBasis,
+                    selection.Candidate.ResumePosition,
+                    _handles.Create(instance.Alias, selection.Candidate.Target, "video", "episode", HandleAction.Play)));
+            }
+            return new UpNextShowResult(instance.Alias, limit, shows.Count, scannedEpisodes, scanCapped, shows);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<ResolvedPlaybackResult> PlayRandomAsync(
+        string? alias,
+        string domain,
+        string watchedState,
+        int? year,
+        string? genre,
+        double? minimumRating,
+        CancellationToken cancellationToken)
+    {
+        var normalizedDomain = domain.Trim().ToLowerInvariant();
+        if (normalizedDomain is not ("movies" or "episodes"))
+            throw new McpException("Domain must be movies or episodes.");
+        var normalizedState = watchedState.Trim().ToLowerInvariant();
+        if (normalizedState is not ("any" or "unwatched" or "watched"))
+            throw new McpException("Watched state must be any, unwatched, or watched.");
+        if (year is < 1 or > 9999) throw new McpException("Year must be between 1 and 9999.");
+        var normalizedGenre = NormalizeSearchText(genre, "Genre", 100);
+        if (minimumRating is < 0 or > 10) throw new McpException("Minimum rating must be between 0 and 10.");
+        if (normalizedDomain == "episodes" && (year is not null || normalizedGenre is not null || minimumRating is not null))
+            throw new McpException("Year, genre, and minimum rating filters are supported only for movies.");
+        EnsureControl(_options.Controls.AllowPlayback, "random playback", "AllowPlayback");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var resultProperty = normalizedDomain;
+            var result = await instance.Client.CallAsync(
+                normalizedDomain == "movies" ? "VideoLibrary.GetMovies" : "VideoLibrary.GetEpisodes", writer =>
+                {
+                    WriteStringArray(writer, "properties", normalizedDomain == "movies"
+                        ? ["title", "year", "rating", "file"]
+                        : ["title", "showtitle", "season", "episode", "file"]);
+                    var filters = new List<SearchFilterRule>();
+                    if (normalizedState != "any")
+                        filters.Add(new SearchFilterRule("playcount", normalizedState == "unwatched" ? "is" : "greaterthan",
+                            normalizedState == "unwatched" ? "0" : "0"));
+                    if (year is not null) filters.Add(new SearchFilterRule("year", "is", year.Value.ToString(CultureInfo.InvariantCulture)));
+                    if (normalizedGenre is not null) filters.Add(new SearchFilterRule("genre", "contains", normalizedGenre));
+                    if (minimumRating is not null) filters.Add(new SearchFilterRule("rating", "greaterthan", minimumRating.Value.ToString(CultureInfo.InvariantCulture)));
+                    if (filters.Count > 0) WriteSearchFilter(writer, filters);
+                    WriteLimits(writer, 0, 1);
+                    WriteSort(writer, "random");
+                }, cancellationToken);
+            var selected = GetArray(result, resultProperty).FirstOrDefault();
+            var target = GetString(selected, "file");
+            if (selected.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(target))
+                throw new McpException("No playable library item matched the random playback filters.");
+            var playback = await OpenTargetAsync(instance, target, false, "play-random", cancellationToken);
+            return new ResolvedPlaybackResult(
+                instance.Alias,
+                normalizedDomain,
+                normalizedDomain == "movies" ? "movie" : "episode",
+                "library",
+                "random-filter-match",
+                _safeText.Clean(ItemTitle(selected)),
+                GetInt(selected, "year"),
+                GetInt(selected, "season"),
+                GetInt(selected, "episode"),
+                playback.Accepted,
+                playback.Observed,
+                playback.Outcome,
+                playback.PlayerId,
+                playback.State);
         }
         catch (KodiRpcException exception)
         {

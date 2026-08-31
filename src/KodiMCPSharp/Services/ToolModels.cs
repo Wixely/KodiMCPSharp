@@ -180,6 +180,23 @@ public sealed record RecentlyWatchedMovieResult(
     bool HasMoreHistory,
     IReadOnlyList<RecentlyWatchedMovieSummary> Movies);
 
+public sealed record UpNextShowSummary(
+    string Show,
+    string? EpisodeLabel,
+    int SeasonNumber,
+    int EpisodeNumber,
+    string SelectionBasis,
+    double ResumePositionSeconds,
+    string Handle);
+
+public sealed record UpNextShowResult(
+    string Alias,
+    int RequestedLimit,
+    int Returned,
+    int ScannedEpisodes,
+    bool ScanCapped,
+    IReadOnlyList<UpNextShowSummary> Shows);
+
 public sealed record AddonSummary(
     string? Name,
     string? AddonType,

@@ -98,6 +98,15 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.ListRecentlyWatchedMoviesAsync(alias, limit, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_list_up_next"),
+     Description("List one up-next episode per progressed TV show in one call. Partially watched episodes win; otherwise the first unwatched episode after the latest watched point is selected.")]
+    public static async Task<string> ListUpNext(
+        KodiService service,
+        [Description("Maximum shows to return, from 1 to 50.")] int limit = 10,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListUpNextAsync(alias, limit, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_browse_tv_show"),
      Description("Browse a TV-show handle into seasons, or a season handle into playable episodes. Only server-issued library handles are accepted.")]
     public static async Task<string> BrowseTvShow(
@@ -267,6 +276,20 @@ public static class KodiTools
         [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.PlayMovieAsync(alias, title, year, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_play_random"),
+     Description("Select and play one random library movie or episode in a single call, with closed watched-state filters and optional movie year, genre, and minimum rating. Requires the playback gate.")]
+    public static async Task<string> PlayRandom(
+        KodiService service,
+        [Description("Closed domain: movies or episodes.")] string domain = "movies",
+        [Description("Closed watched state: any, unwatched, or watched.")] string watchedState = "unwatched",
+        [Description("Optional exact movie year from 1 to 9999.")] int? year = null,
+        [Description("Optional movie genre (1-100 printable characters).")]
+        string? genre = null,
+        [Description("Optional minimum movie rating from 0 to 10.")] double? minimumRating = null,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlayRandomAsync(alias, domain, watchedState, year, genre, minimumRating, cancellationToken), JsonOptions);
 
     [McpServerTool(Name = "kodi_play_episode"),
      Description("Find and play one exact TV episode by show title, season, and episode in one MCP call. Searches safe favourites first, then the Kodi library, then bounded learned add-on routes. Requires the playback gate.")]

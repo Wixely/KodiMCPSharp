@@ -17,6 +17,7 @@ Status: browsing, persistent fixed and single-input learned add-on routes, guard
 | `kodi_list_continue_watching` | List in-progress movies, episodes, or TV shows with resume state |
 | `kodi_list_recently_watched_shows` | List unique shows by their most recently played episode |
 | `kodi_list_recently_watched_movies` | List movies in true last-played order |
+| `kodi_list_up_next` | List one next episode per progressed show in recency order |
 | `kodi_browse_tv_show` | Traverse an opaque TV-show handle into seasons and playable episodes |
 | `kodi_list_favourites` | List safe favourite summaries |
 | `kodi_search_favourites` | Search favourite titles with an optional safe type filter |
@@ -27,6 +28,7 @@ Status: browsing, persistent fixed and single-input learned add-on routes, guard
 | `kodi_play_movie` | Resolve and play a movie by title and optional exact year in one MCP call |
 | `kodi_play_episode` | Resolve and play an exact show/season/episode in one MCP call |
 | `kodi_play_next_episode` | Resolve and play a show's next episode in one MCP call |
+| `kodi_play_random` | Play a filtered random movie or episode in one MCP call |
 | `kodi_resume` | Resume an in-progress library movie or episode by title in one MCP call |
 | `kodi_list_addons` | List enabled add-ons and issue handles for browsable roots |
 | `kodi_capture_current_addon_page` | Capture a user-opened add-on results page as an opaque browse handle |
@@ -199,7 +201,7 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 39-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
+- a fixed 41-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
 - atomic learned-route persistence, reload, write gating, add-on provenance, fixed-route reuse, and removal;
 - single-string learned search inference, closed search-key policy, encoded binding, and opaque bound-route reuse;
 - player actions, seek bounds, volume/mute, enumerated stream selection, repeat/shuffle, and opaque-handle playlist mutations with synthetic postcondition checks;
@@ -212,6 +214,6 @@ Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux an
 
 ## Project status and next action
 
-Synthetic acceptance covers all media-control categories plus queue inspection/reordering, genre, recent, continue-watching, recently watched shows and movies, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current source catalogue contains 39 bounded tools. Live acceptance covers every discovery domain including show and movie viewing history, opaque TV show → season → playable episode traversal, Kodi 21 plug-in-source listing, simple and three-level complex add-on navigation, Fen Light parameter inference/binding/browsing across a process restart, and restoring active playback to Kodi's full-screen video window. Queue operations, favourite mutation, bulk watch state, the latest one-call helpers, the complete control matrix, the second learned-search add-on, refreshed package discovery, systemd, and Docker remain to be verified.
+Synthetic acceptance covers all media-control categories plus queue inspection/reordering, filtered random playback, cross-show up-next selection, genre, recent, continue-watching, viewing history, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current source catalogue contains 41 bounded tools. Live acceptance covers every prior discovery domain, opaque TV traversal, Kodi 21 plug-in-source listing, generic add-on navigation, Fen Light parameterized search across a process restart, full-screen video restoration, and bounded per-show up-next discovery. Queue reordering, random playback, favourite mutation, bulk watch state, the complete control matrix, the second learned-search add-on, systemd, and Docker remain to be verified.
 
 See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.
