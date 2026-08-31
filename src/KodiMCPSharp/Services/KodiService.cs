@@ -1227,6 +1227,7 @@ public sealed partial class KodiService
         {
             var result = await instance.Client.CallAsync("Addons.GetAddons", writer =>
             {
+                writer.WriteString("type", "xbmc.python.pluginsource");
                 writer.WriteBoolean("enabled", true);
                 // Kodi 21 rejects "type" in Addon.Fields even though it returns type as a base field.
                 WriteStringArray(writer, "properties", ["name", "version", "summary", "description", "enabled"]);

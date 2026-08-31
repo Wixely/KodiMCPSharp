@@ -6,7 +6,12 @@ param(
     [ValidateRange(1, 1000)]
     [int]$ExpectedToolCount = 34,
     [switch]$ProbeAddons,
-    [switch]$AllowLocalConfiguration
+    [switch]$AllowLocalConfiguration,
+    [ValidateRange(0, 3)]
+    [int]$AddonTraversalDepth = 0,
+    [ValidateLength(0, 200)]
+    [string]$PreferredAddonName = '',
+    [string[]]$AddonMenuPath = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -88,7 +93,7 @@ try {
             jsonrpc = '2.0'
             id = 3
             method = 'tools/call'
-            params = @{ name = 'kodi_list_addons'; arguments = @{ page = 0; pageSize = 25 } }
+            params = @{ name = 'kodi_list_addons'; arguments = @{ page = 0; pageSize = 50 } }
         } | ConvertTo-Json -Depth 5 -Compress
         $addonResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/mcp" `
             -Method Post -ContentType 'application/json' -Headers $headers -Body $callAddons -TimeoutSec 20
@@ -102,6 +107,89 @@ try {
         $addonPage = $addonPayload.result.content[0].text | ConvertFrom-Json
         $summary.AddonCount = @($addonPage.addons).Count
         $summary.BrowsableAddonCount = @($addonPage.addons | Where-Object browsable).Count
+
+        if ($AddonTraversalDepth -gt 0) {
+            $browsableAddons = @($addonPage.addons | Where-Object { $_.browsable -and $_.handle })
+            $selectedAddon = if ([string]::IsNullOrWhiteSpace($PreferredAddonName)) {
+                $browsableAddons | Select-Object -First 1
+            }
+            else {
+                $browsableAddons | Where-Object { $_.name -like "*$PreferredAddonName*" } | Select-Object -First 1
+            }
+            if ($null -eq $selectedAddon) { throw 'The requested browsable add-on was not present in the bounded result.' }
+
+            $currentHandle = $selectedAddon.handle
+            $completedDepth = 0
+            $visitedItemCount = 0
+            for ($depth = 1; $depth -le $AddonTraversalDepth; $depth++) {
+                $browseCall = @{
+                    jsonrpc = '2.0'
+                    id = 3 + $depth
+                    method = 'tools/call'
+                    params = @{
+                        name = 'kodi_browse'
+                        arguments = @{ handle = $currentHandle; media = 'video'; page = 0; pageSize = 25 }
+                    }
+                } | ConvertTo-Json -Depth 6 -Compress
+                $browseResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/mcp" `
+                    -Method Post -ContentType 'application/json' -Headers $headers -Body $browseCall -TimeoutSec 30
+                $browseDataLine = $browseResponse.Content -split "`n" | Where-Object { $_ -like 'data:*' } | Select-Object -Last 1
+                $browseJson = if ($browseDataLine) { $browseDataLine.Substring(5).Trim() } else { $browseResponse.Content }
+                $browsePayload = $browseJson | ConvertFrom-Json
+                if ($browsePayload.error -or $browsePayload.result.isError) { break }
+                $page = $browsePayload.result.content[0].text | ConvertFrom-Json
+                $items = @($page.items)
+                $visitedItemCount += $items.Count
+                $completedDepth = $depth
+                $next = $items | Where-Object { $_.handle -and @($_.availableActions) -contains 'browse' } | Select-Object -First 1
+                if ($null -eq $next) { break }
+                $currentHandle = $next.handle
+            }
+            $summary.AddonTraversalRequestedDepth = $AddonTraversalDepth
+            $summary.AddonTraversalCompletedDepth = $completedDepth
+            $summary.AddonTraversalVisitedItemCount = $visitedItemCount
+        }
+
+        if ($AddonMenuPath.Count -gt 0) {
+            if ([string]::IsNullOrWhiteSpace($PreferredAddonName)) {
+                throw 'A preferred add-on name is required for semantic menu-path probing.'
+            }
+            $selectedAddon = @($addonPage.addons | Where-Object { $_.browsable -and $_.handle }) |
+                Where-Object { $_.name -like "*$PreferredAddonName*" } | Select-Object -First 1
+            if ($null -eq $selectedAddon) { throw 'The requested browsable add-on was not present in the bounded result.' }
+
+            $currentHandle = $selectedAddon.handle
+            $matchedSegments = 0
+            for ($segmentIndex = 0; $segmentIndex -lt $AddonMenuPath.Count; $segmentIndex++) {
+                $menuCall = @{
+                    jsonrpc = '2.0'
+                    id = 20 + $segmentIndex
+                    method = 'tools/call'
+                    params = @{
+                        name = 'kodi_browse'
+                        arguments = @{ handle = $currentHandle; media = 'video'; page = 0; pageSize = 50 }
+                    }
+                } | ConvertTo-Json -Depth 6 -Compress
+                $menuResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/mcp" `
+                    -Method Post -ContentType 'application/json' -Headers $headers -Body $menuCall -TimeoutSec 30
+                $menuDataLine = $menuResponse.Content -split "`n" | Where-Object { $_ -like 'data:*' } | Select-Object -Last 1
+                $menuJson = if ($menuDataLine) { $menuDataLine.Substring(5).Trim() } else { $menuResponse.Content }
+                $menuPayload = $menuJson | ConvertFrom-Json
+                if ($menuPayload.error -or $menuPayload.result.isError) { throw 'An add-on menu page could not be read.' }
+                $menuPage = $menuPayload.result.content[0].text | ConvertFrom-Json
+                $segment = $AddonMenuPath[$segmentIndex]
+                $items = @($menuPage.items | Where-Object { $_.handle })
+                $selectedItem = $items | Where-Object { $_.label -eq $segment } | Select-Object -First 1
+                if ($null -eq $selectedItem) {
+                    $selectedItem = $items | Where-Object { $_.label -like "*$segment*" } | Select-Object -First 1
+                }
+                if ($null -eq $selectedItem) { throw 'A requested semantic menu segment was not found.' }
+                $currentHandle = $selectedItem.handle
+                $matchedSegments++
+            }
+            $summary.AddonMenuSegmentsRequested = $AddonMenuPath.Count
+            $summary.AddonMenuSegmentsMatched = $matchedSegments
+        }
     }
 
     [pscustomobject]$summary

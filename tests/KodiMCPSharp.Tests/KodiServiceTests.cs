@@ -37,10 +37,15 @@ public sealed class KodiServiceTests
     {
         string? receivedDirectory = null;
         var requestedTypeProperty = false;
+        string? requestedAddonType = null;
         var fake = new FakeKodiClient((method, write) => method switch
         {
-            "Addons.GetAddons" => CaptureParameters(write, root => requestedTypeProperty = root.GetProperty("properties")
-                .EnumerateArray().Any(value => value.GetString() == "type"), """
+            "Addons.GetAddons" => CaptureParameters(write, root =>
+            {
+                requestedAddonType = root.GetProperty("type").GetString();
+                requestedTypeProperty = root.GetProperty("properties").EnumerateArray()
+                    .Any(value => value.GetString() == "type");
+            }, """
                 {"limits":{"start":0,"end":1,"total":1},"addons":[{"addonid":"plugin.video.synthetic","name":"Synthetic","type":"xbmc.python.pluginsource","enabled":true}]}
                 """),
             "Files.GetDirectory" => CaptureDirectory(write, value => receivedDirectory = value),
@@ -52,6 +57,7 @@ public sealed class KodiServiceTests
         var result = await service.BrowseAsync("room", addons.Addons.Single().Handle, "video", 0, 25, TestContext.Current.CancellationToken);
 
         Assert.Equal("plugin://plugin.video.synthetic/", receivedDirectory);
+        Assert.Equal("xbmc.python.pluginsource", requestedAddonType);
         Assert.False(requestedTypeProperty);
         Assert.DoesNotContain("plugin://", JsonSerializer.Serialize(addons), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("plugin://", JsonSerializer.Serialize(result), StringComparison.OrdinalIgnoreCase);

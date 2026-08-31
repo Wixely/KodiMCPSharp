@@ -1,6 +1,6 @@
 # KodiMCPSharp starting plan
 
-- Status: Browsing, persistent fixed and single-input learned add-on routes, independently gated media controls, watch-state updates, and idempotent favourite changes implemented; representative add-on acceptance pending
+- Status: Browsing, persistent fixed and single-input learned add-on routes, independently gated media controls, watch-state updates, and idempotent favourite changes implemented; representative generic add-on navigation accepted live, learned-search acceptance pending
 - Created: 2026-08-30
 - Owner: TBD
 - Target stack: C# and .NET 10
@@ -191,7 +191,8 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - 2026-08-31: Added one-call movie, exact-episode, and library-resume workflows. Movie and episode resolution stays favourites-first where applicable, rejects ambiguous matches, restricts movie favourites to plausible video targets, then uses the structured library and bounded learned search routes; resume uses Kodi's in-progress state and explicit `Player.Open` resume option. Kodi 21 add-on listing compatibility was restored by omitting the invalid requested `type` property while retaining Kodi's returned base field. The Release suite passes 87 tests and the source catalogue contains 34 tools.
 - 2026-08-31: The current `linux-x64` self-contained package ran interactively under WSL2, passed `/healthz`, negotiated MCP 2025-06-18, and exposed all 34 tools including semantic movie, episode, and resume playback. Current `win-x64` and `linux-x64` packages both publish successfully.
 - 2026-08-31: The repeatable Windows package smoke test passed safe startup, MCP 2025-06-18 negotiation, exact 34-tool discovery, forbidden-input inspection, and private local-configuration exclusion. Optional live add-on probing returns counts only.
-- Linux systemd, Docker runtime, and representative add-on behavior remain unverified.
+- 2026-08-31: Kodi 21 accepted `Addons.GetAddons` after restricting the request to enabled `xbmc.python.pluginsource` add-ons and omitting `type` from the optional property list. A simple installed add-on returned its structured root, and a complex installed add-on traversed three directory levels through same-add-on opaque handles. No add-on names, menu labels, targets, or media metadata were retained. The target became unavailable before semantic search-menu acceptance.
+- Linux systemd and Docker runtime remain unverified.
 
 ## Next actions
 
@@ -210,10 +211,10 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - [x] Define bulk semantics: season zero requires explicit opt-in, unnumbered entries are skipped and counted, multiple records at one coordinate are separate versions, mutations clear resume without writing last-played metadata, recoverable remote failures are per-item, cancellation stops before the next item, and retries re-read state and skip completed episodes. - Owner: Agent; completed: 2026-08-31
 
 - [x] Record the target Kodi version, enabled remote interface, and authentication mode. Priority add-ons remain to be selected. - Owner: User / Agent; completed: 2026-08-30
-- [ ] Verify typed status, player, library, favourites, directory, and add-on methods against the target. - Owner: Agent; target review date: 2026-09-13
+- [x] Verify typed status, player, library, favourites, directory, and add-on methods against the target. - Owner: Agent; completed: 2026-08-31
 - [x] Define redaction and opaque-handle contracts before returning directory or plug-in results. - Owner: Agent; completed: 2026-08-30
 - [x] Build a fake Kodi transport and read-only client vertical slice with bounded status/search/browse operations. - Owner: Agent; completed: 2026-08-30
-- [ ] Test one simple and one complex installed add-on and document the generic compatibility boundary. - Owner: Agent
+- [x] Test one simple and one complex installed add-on and document the generic compatibility boundary. Structured directory menus are generic; keyboard/dialog input, unstructured results, cross-add-on targets, and unclassified actions remain outside the boundary. - Owner: Agent; completed: 2026-08-31
 - [x] Add play-from-handle and bounded player, seek, volume, stream, mode, and playlist controls behind independent gates with postcondition checks. - Owner: User / Agent; completed: 2026-08-30
 - [x] Add genre, recent, continue-watching, and TV hierarchy discovery without exposing Kodi IDs or paths. - Owner: Agent; completed: 2026-08-30
 - [x] Add persistent fixed learned add-on routes without accepting or returning raw plug-in targets. - Owner: Agent; completed: 2026-08-30
