@@ -58,6 +58,26 @@ public sealed record StreamSummary(
 
 public sealed record TimeSummary(int Hours, int Minutes, int Seconds, int Milliseconds);
 
+public sealed record EpisodeWatchStateResult(
+    string Alias,
+    string RequestedState,
+    string? ObservedState,
+    bool Accepted,
+    bool Observed,
+    string Completion);
+
+public sealed record FavouriteMutationResult(
+    string Alias,
+    string RequestedState,
+    string? ObservedState,
+    bool Accepted,
+    bool Observed,
+    string Completion,
+    int MatchesBefore,
+    int MatchesAfter,
+    string? Title,
+    string FavouriteType);
+
 public sealed record MediaItemSummary(
     string? Label,
     string? MediaType,
@@ -71,12 +91,15 @@ public sealed record MediaItemSummary(
     string[] Genres,
     int? DurationSeconds,
     int? PlayCount,
+    string? WatchState,
     double? ResumePositionSeconds,
     double? ResumeTotalSeconds,
     bool HasArtwork,
     bool IsFolder,
     bool IsPlayable,
-    string? Handle);
+    string? Handle,
+    string[] AvailableActions,
+    string? UnsupportedReason);
 
 public sealed record GenreSummary(string? Name);
 
@@ -145,6 +168,20 @@ public sealed record PlaybackResult(
     string Outcome,
     int? PlayerId,
     string? PlayerType,
+    string? State);
+
+public sealed record PlayNextEpisodeResult(
+    string Alias,
+    string Show,
+    string Source,
+    string SelectionBasis,
+    string? EpisodeLabel,
+    int? SeasonNumber,
+    int? EpisodeNumber,
+    bool Accepted,
+    bool Observed,
+    string Outcome,
+    int? PlayerId,
     string? State);
 
 public sealed record MediaControlResult(

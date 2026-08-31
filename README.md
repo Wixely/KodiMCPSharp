@@ -2,7 +2,7 @@
 
 KodiMCPSharp is a read-first MCP server for inspecting, browsing, and controlling media on one or more Kodi instances through Kodi's supported JSON-RPC HTTP interface. It is written in C# for .NET 10 and exposes a stateless Streamable HTTP MCP endpoint.
 
-Status: browsing, persistent fixed and single-input learned add-on routes, guarded playback, player controls, seeking, volume, stream selection, playback modes, and playlist mutations are implemented. Every state-changing category remains disabled by default and has its own deployment gate.
+Status: browsing, persistent fixed and single-input learned add-on routes, guarded playback, player controls, seeking, volume, stream selection, playback modes, playlist mutations, watch-state updates, and idempotent favourite changes are implemented. Every state-changing category remains disabled by default and has its own deployment gate.
 
 ## Available tools
 
@@ -17,6 +17,11 @@ Status: browsing, persistent fixed and single-input learned add-on routes, guard
 | `kodi_list_continue_watching` | List in-progress movies, episodes, or TV shows with resume state |
 | `kodi_browse_tv_show` | Traverse an opaque TV-show handle into seasons and playable episodes |
 | `kodi_list_favourites` | List safe favourite summaries |
+| `kodi_search_favourites` | Search favourite titles with an optional safe type filter |
+| `kodi_add_favourite` | Idempotently add a server-issued media or folder handle to favourites; disabled by default |
+| `kodi_remove_favourite` | Idempotently remove one exact supported favourite handle; disabled by default |
+| `kodi_set_episode_watch_state` | Gated watched/unwatched update for one episode handle |
+| `kodi_play_next_episode` | Resolve and play a show's next episode in one MCP call |
 | `kodi_list_addons` | List enabled add-ons and issue handles for browsable roots |
 | `kodi_browse` | List a closed source root or traverse a server-issued folder handle |
 | `kodi_save_addon_route` | Persist a fixed route or infer one safe search input from a server-issued add-on handle; disabled by default |
@@ -52,7 +57,11 @@ The parameterized slice supports one string input inferred from a complete obser
 
 The existing episode, song, and album searches continue to use `query`; year and genre filters are rejected for those domains rather than being silently ignored.
 
-`kodi_list_genres` discovers valid genre names before searching. `kodi_list_recent` and `kodi_list_continue_watching` provide bounded discovery views without requiring a search term. TV-show results carry an opaque library handle; pass it to `kodi_browse_tv_show` to list seasons, then pass a returned season handle to the same tool to list playable episodes. Kodi database identifiers and episode paths remain server-side.
+`kodi_list_genres` discovers valid genre names before searching. `kodi_list_recent` and `kodi_list_continue_watching` provide bounded discovery views without requiring a search term. Movie and episode results explicitly report `watched`, `partially-watched`, or `unwatched` from Kodi's play count and resume position. Item summaries advertise their closed `availableActions`, such as `play`, `browse`, `add-favourite`, or `set-watch-state`, so clients do not need to probe invalid mutations. `kodi_search_favourites` performs case-insensitive title search and can constrain Kodi's closed favourite types (`media`, `window`, `script`, or `androidapp`) without returning their executable targets; unsupported favourite types include a bounded reason and no handle. TV-show results carry an opaque library handle; pass it to `kodi_browse_tv_show` to list seasons, then pass a returned season handle to the same tool to list playable episodes. Kodi database identifiers and episode paths remain server-side.
+
+`kodi_play_next_episode` is the low-call path for requests such as “play the next episode of Example Show.” One MCP call performs a favourites-first lookup, then falls back to the Kodi TV library, and finally to bounded learned add-on routes. It resumes a partially watched episode before choosing the first unwatched episode in season/episode order. Safe video-window favourites and add-on routes remain server-observed; the agent supplies only a show title. Generic add-on fallback is available only when a browse-capable `next episodes` route or parameterized TV-search route has already been learned. KodiMCPSharp does not crawl arbitrary add-ons, accept raw plug-in paths, or inject text into add-on UI dialogs.
+
+Favourite changes use separate add and remove tools even though Kodi's underlying method is a toggle. KodiMCPSharp reads the exact current state before calling Kodi and re-reads it afterward, making ordinary retries idempotent. Duplicate exact favourites are reported without toggling. Media favourites remain playable and safe video-window plug-in favourites remain browseable; script, Android-app, arbitrary-window, and other executable favourites receive no action handle. Rename, artwork changes, and ordering are not exposed because Kodi JSON-RPC has no dedicated operations for them.
 
 ## Requirements
 
@@ -103,7 +112,7 @@ Configuration is validated at startup:
 - page, response-size, timeout, handle-lifetime, handle-capacity, and learned-route limits have hard bounds;
 - invalid TLS certificates are rejected unless explicitly opted out per instance.
 
-Controls require `Kodi:ReadOnly=false` plus their independent `Kodi:Controls` gate: `AllowPlayback`, `AllowPlayerControl`, `AllowSeek`, `AllowVolume`, `AllowStreamSelection`, `AllowPlaybackModes`, `AllowPlaylists`, or `AllowFullscreenVideo`. The checked-in defaults keep `ReadOnly=true` and every gate false. Play and playlist-add accept only short-lived handles returned by search/browse; they cannot accept caller-supplied paths or URLs.
+Controls require `Kodi:ReadOnly=false` plus their independent `Kodi:Controls` gate: `AllowPlayback`, `AllowPlayerControl`, `AllowSeek`, `AllowVolume`, `AllowStreamSelection`, `AllowPlaybackModes`, `AllowPlaylists`, `AllowFullscreenVideo`, `AllowWatchState`, or `AllowFavourites`. The checked-in defaults keep `ReadOnly=true` and every gate false. Play, playlist-add, watch-state, and favourite changes accept only short-lived handles returned by search/browse; they cannot accept caller-supplied paths, URLs, or Kodi database IDs. Setting an episode watched or unwatched clears its resume point and verifies the resulting state.
 
 Learned-route writes use the separate `Kodi:LearnedRoutes:AllowWrite` gate, which is also false in checked-in configuration. This gate may be enabled while Kodi remains read-only because it writes only KodiMCPSharp's local route store.
 
@@ -167,12 +176,14 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 25-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
+- a fixed 30-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
 - atomic learned-route persistence, reload, write gating, add-on provenance, fixed-route reuse, and removal;
 - single-string learned search inference, closed search-key policy, encoded binding, and opaque bound-route reuse;
 - player actions, seek bounds, volume/mute, enumerated stream selection, repeat/shuffle, and opaque-handle playlist mutations with synthetic postcondition checks;
 - composable movie and TV-show title/year/genre filters, input validation, and safe genre metadata in results;
 - genre discovery, recent and in-progress media views, and opaque TV-show/season hierarchy traversal.
+- case-insensitive favourite search, gated idempotent add/remove with duplicate refusal, plus explicit movie/episode watch-state discovery and gated single-episode updates.
+- one-call next-episode playback with favourites, library, and learned-route resolution priority.
 
 Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux and smoke-publishes `win-x64`, `linux-x64`, and `linux-arm64` artifacts with three-day retention.
 

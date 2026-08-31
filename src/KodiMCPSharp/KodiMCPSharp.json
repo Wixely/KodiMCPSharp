@@ -16,7 +16,9 @@
       "AllowStreamSelection": false,
       "AllowPlaybackModes": false,
       "AllowPlaylists": false,
-      "AllowFullscreenVideo": false
+      "AllowFullscreenVideo": false,
+      "AllowWatchState": false,
+      "AllowFavourites": false
     },
     "RequestTimeoutSeconds": 10,
     "MaximumResponseBytes": 2097152,

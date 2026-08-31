@@ -15,7 +15,7 @@ public sealed partial class KodiService
     [
         "kodi_list_instances", "kodi_get_capabilities", "kodi_get_status",
         "kodi_search_library", "kodi_list_genres", "kodi_list_recent", "kodi_list_continue_watching",
-        "kodi_browse_tv_show", "kodi_list_favourites", "kodi_list_addons", "kodi_browse",
+        "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_list_addon_routes", "kodi_bind_addon_route",
     ];
 
@@ -72,7 +72,8 @@ public sealed partial class KodiService
             "kodi_play_item", "kodi_player_control", "kodi_seek", "kodi_set_volume",
             "kodi_select_stream", "kodi_set_playback_mode", "kodi_playlist_add",
             "kodi_playlist_remove", "kodi_playlist_clear", "kodi_show_fullscreen_video",
-            "kodi_save_addon_route", "kodi_forget_addon_route",
+            "kodi_save_addon_route", "kodi_forget_addon_route", "kodi_set_episode_watch_state",
+            "kodi_play_next_episode", "kodi_add_favourite", "kodi_remove_favourite",
         ],
         ControlGates: new Dictionary<string, bool>
         {
@@ -84,6 +85,8 @@ public sealed partial class KodiService
             ["playbackModes"] = !_options.ReadOnly && _options.Controls.AllowPlaybackModes,
             ["playlists"] = !_options.ReadOnly && _options.Controls.AllowPlaylists,
             ["fullscreenVideo"] = !_options.ReadOnly && _options.Controls.AllowFullscreenVideo,
+            ["watchState"] = !_options.ReadOnly && _options.Controls.AllowWatchState,
+            ["favourites"] = !_options.ReadOnly && _options.Controls.AllowFavourites,
             ["learnedRouteWrites"] = _options.LearnedRoutes.AllowWrite,
             ["navigation"] = false,
             ["addonActivation"] = false,
@@ -127,6 +130,45 @@ public sealed partial class KodiService
             }
 
             return new PlaybackResult(instance.Alias, "play", accepted, false, accepted ? "accepted-not-yet-observed" : "indeterminate", null, null, null);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<PlayNextEpisodeResult> PlayNextEpisodeAsync(
+        string? alias,
+        string show,
+        CancellationToken cancellationToken)
+    {
+        var normalizedShow = NormalizeSearchText(show, "TV show", 200)
+            ?? throw new McpException("TV show is required.");
+        if (_options.ReadOnly) throw new McpException("Playback is blocked while Kodi:ReadOnly is true.");
+        if (!_options.Controls.AllowPlayback)
+            throw new McpException("Playback is disabled. Set Kodi:Controls:AllowPlayback=true to enable play-next-episode.");
+
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var resolution = await ResolveNextEpisodeAsync(instance, normalizedShow, cancellationToken)
+                ?? throw new McpException($"No playable unwatched or partially watched episode was found for '{normalizedShow}' in favourites, the Kodi library, or learned add-on routes.");
+            var handle = _handles.Create(instance.Alias, resolution.Candidate.Target, "video", "episode", HandleAction.Play,
+                resolution.Candidate.AddonId, resolution.Candidate.AddonName);
+            var playback = await PlayItemAsync(instance.Alias, handle, cancellationToken);
+            return new PlayNextEpisodeResult(
+                instance.Alias,
+                normalizedShow,
+                resolution.Source,
+                resolution.SelectionBasis,
+                resolution.Candidate.Label,
+                resolution.Candidate.Season,
+                resolution.Candidate.Episode,
+                playback.Accepted,
+                playback.Observed,
+                playback.Outcome,
+                playback.PlayerId,
+                playback.State);
         }
         catch (KodiRpcException exception)
         {
@@ -652,6 +694,189 @@ public sealed partial class KodiService
         }
     }
 
+    public Task<FavouriteMutationResult> AddFavouriteAsync(
+        string? alias,
+        string handle,
+        CancellationToken cancellationToken) =>
+        SetFavouritePresenceAsync(alias, handle, true, cancellationToken);
+
+    public Task<FavouriteMutationResult> RemoveFavouriteAsync(
+        string? alias,
+        string handle,
+        CancellationToken cancellationToken) =>
+        SetFavouritePresenceAsync(alias, handle, false, cancellationToken);
+
+    private async Task<FavouriteMutationResult> SetFavouritePresenceAsync(
+        string? alias,
+        string handle,
+        bool present,
+        CancellationToken cancellationToken)
+    {
+        EnsureControl(_options.Controls.AllowFavourites, "favourite changes", "AllowFavourites");
+        var instance = _registry.Resolve(alias);
+        var entry = _handles.Resolve(handle, instance.Alias,
+            present ? HandleAction.AddFavourite : HandleAction.RemoveFavourite);
+        var favourite = entry.Favourite
+            ?? throw new McpException("The item handle does not contain a supported favourite target.");
+
+        try
+        {
+            var before = await GetFavouriteMatchCountAsync(instance, favourite, cancellationToken);
+            if ((present && before > 0) || (!present && before == 0))
+            {
+                return new FavouriteMutationResult(
+                    instance.Alias, present ? "present" : "absent", present ? "present" : "absent",
+                    false, true, "already-in-requested-state", before, before,
+                    _safeText.Clean(favourite.Title), favourite.Type);
+            }
+            if (before > 1)
+            {
+                throw new McpException(
+                    "Kodi contains duplicate exact favourites for this handle. No change was made because a toggle would be ambiguous.");
+            }
+
+            var response = await instance.Client.CallAsync("Favourites.AddFavourite", writer =>
+            {
+                WriteFavourite(writer, favourite);
+            }, cancellationToken);
+            var accepted = IsAccepted(response);
+            var after = await GetFavouriteMatchCountAsync(instance, favourite, cancellationToken);
+            var observed = present ? after > 0 : after == 0;
+            return new FavouriteMutationResult(
+                instance.Alias, present ? "present" : "absent",
+                after > 0 ? "present" : "absent", accepted, observed,
+                observed ? "observed-complete" : accepted ? "accepted-postcondition-not-observed" : "indeterminate",
+                before, after, _safeText.Clean(favourite.Title), favourite.Type);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    private static async Task<int> GetFavouriteMatchCountAsync(
+        RegisteredKodiInstance instance,
+        FavouriteDescriptor favourite,
+        CancellationToken cancellationToken)
+    {
+        var result = await instance.Client.CallAsync("Favourites.GetFavourites", writer =>
+        {
+            writer.WriteString("type", favourite.Type);
+            WriteStringArray(writer, "properties", ["path", "window", "windowparameter", "thumbnail"]);
+        }, cancellationToken);
+        return result.TryGetProperty("favourites", out var values) && values.ValueKind == JsonValueKind.Array
+            ? values.EnumerateArray().Count(item => FavouriteMatches(item, favourite))
+            : 0;
+    }
+
+    private static void WriteFavourite(Utf8JsonWriter writer, FavouriteDescriptor favourite)
+    {
+        writer.WriteString("title", favourite.Title);
+        writer.WriteString("type", favourite.Type);
+        if (favourite.Path is not null) writer.WriteString("path", favourite.Path);
+        if (favourite.Window is not null) writer.WriteString("window", favourite.Window);
+        if (favourite.WindowParameter is not null) writer.WriteString("windowparameter", favourite.WindowParameter);
+        if (favourite.Thumbnail is not null) writer.WriteString("thumbnail", favourite.Thumbnail);
+    }
+
+    private static bool FavouriteMatches(JsonElement item, FavouriteDescriptor favourite) =>
+        string.Equals(FavouriteTitle(item), favourite.Title, StringComparison.Ordinal) &&
+        string.Equals(GetString(item, "type"), favourite.Type, StringComparison.OrdinalIgnoreCase) &&
+        EqualOptional(GetString(item, "path"), favourite.Path) &&
+        EqualOptional(GetString(item, "window"), favourite.Window) &&
+        EqualOptional(GetString(item, "windowparameter"), favourite.WindowParameter);
+
+    private static bool EqualOptional(string? left, string? right) =>
+        string.Equals(string.IsNullOrEmpty(left) ? null : left, string.IsNullOrEmpty(right) ? null : right, StringComparison.Ordinal);
+
+    public async Task<EpisodeWatchStateResult> SetEpisodeWatchStateAsync(
+        string? alias,
+        string handle,
+        string state,
+        CancellationToken cancellationToken)
+    {
+        EnsureControl(_options.Controls.AllowWatchState, "episode watch-state control", "AllowWatchState");
+        var normalizedState = state.Trim().ToLowerInvariant() switch
+        {
+            "watched" => "watched",
+            "unwatched" => "unwatched",
+            _ => throw new McpException("Episode watch state must be watched or unwatched."),
+        };
+        var instance = _registry.Resolve(alias);
+        var entry = _handles.Resolve(handle, instance.Alias, HandleAction.SetWatchState);
+        if (entry.Kind != "episode" || entry.LibraryId is null)
+            throw new McpException("The handle is not a watch-state-capable episode handle.");
+
+        try
+        {
+            var response = await instance.Client.CallAsync("VideoLibrary.SetEpisodeDetails", writer =>
+            {
+                writer.WriteNumber("episodeid", entry.LibraryId.Value);
+                writer.WriteNumber("playcount", normalizedState == "watched" ? 1 : 0);
+                writer.WritePropertyName("resume");
+                writer.WriteStartObject();
+                writer.WriteNumber("position", 0);
+                writer.WriteNumber("total", 0);
+                writer.WriteEndObject();
+            }, cancellationToken);
+            var accepted = IsAccepted(response);
+            var details = await instance.Client.CallAsync("VideoLibrary.GetEpisodeDetails", writer =>
+            {
+                writer.WriteNumber("episodeid", entry.LibraryId.Value);
+                WriteStringArray(writer, "properties", ["playcount", "resume"]);
+            }, cancellationToken);
+            var observedState = details.TryGetProperty("episodedetails", out var episode)
+                ? GetWatchState(episode)
+                : null;
+            var observed = observedState == normalizedState;
+            return new EpisodeWatchStateResult(
+                instance.Alias, normalizedState, observedState, accepted, observed,
+                observed ? "observed-complete" : accepted ? "accepted-postcondition-not-observed" : "indeterminate");
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<PageSummary> SearchFavouritesAsync(
+        string? alias,
+        string query,
+        string? favouriteType,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var instance = _registry.Resolve(alias);
+        var normalizedQuery = NormalizeSearchText(query, "Favourite title query", 200)
+            ?? throw new McpException("Favourite title query is required.");
+        var normalizedType = NormalizeFavouriteType(favouriteType);
+        var (start, end) = Bounds(page, pageSize);
+        try
+        {
+            var result = await instance.Client.CallAsync("Favourites.GetFavourites", writer =>
+            {
+                if (normalizedType is not null) writer.WriteString("type", normalizedType);
+                WriteStringArray(writer, "properties", ["path", "window", "windowparameter", "thumbnail"]);
+            }, cancellationToken);
+
+            var matches = result.TryGetProperty("favourites", out var favourites) && favourites.ValueKind == JsonValueKind.Array
+                ? favourites.EnumerateArray()
+                    .Where(item => (GetString(item, "label") ?? GetString(item, "title") ?? string.Empty)
+                        .Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase))
+                    .ToArray()
+                : [];
+            var items = matches.Skip(start).Take(end - start)
+                .Select(item => ParseItem(instance.Alias, item, "files", "favourites"))
+                .ToArray();
+            return new PageSummary(instance.Alias, start, start + items.Length, matches.Length, items);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
     public async Task<AddonPageSummary> ListAddonsAsync(string? alias, int page, int pageSize, CancellationToken cancellationToken)
     {
         var instance = _registry.Resolve(alias);
@@ -838,6 +1063,290 @@ public sealed partial class KodiService
             throw ToMcpException(instance.Alias, exception);
         }
     }
+
+    private async Task<NextEpisodeResolution?> ResolveNextEpisodeAsync(
+        RegisteredKodiInstance instance,
+        string show,
+        CancellationToken cancellationToken)
+    {
+        NextEpisodeResolution? favourite = null;
+        try
+        {
+            favourite = await ResolveFavouriteEpisodesAsync(instance, show, cancellationToken);
+        }
+        catch (KodiRpcException exception) when (exception.Kind == KodiFailureKind.Remote)
+        {
+            // An unsupported or stale favourite must not prevent the structured library fallback.
+        }
+        if (favourite is not null) return favourite;
+
+        NextEpisodeResolution? library = null;
+        try
+        {
+            library = await ResolveLibraryEpisodesAsync(instance, show, cancellationToken);
+        }
+        catch (KodiRpcException exception) when (exception.Kind == KodiFailureKind.Remote)
+        {
+            // A missing/disabled library surface may still be satisfied by a learned add-on route.
+        }
+        if (library is not null) return library;
+
+        return await ResolveLearnedAddonEpisodesAsync(instance, show, cancellationToken);
+    }
+
+    private async Task<NextEpisodeResolution?> ResolveFavouriteEpisodesAsync(
+        RegisteredKodiInstance instance,
+        string show,
+        CancellationToken cancellationToken)
+    {
+        var result = await instance.Client.CallAsync("Favourites.GetFavourites", writer =>
+        {
+            WriteStringArray(writer, "properties", ["path", "window", "windowparameter"]);
+        }, cancellationToken);
+        if (!result.TryGetProperty("favourites", out var favourites) || favourites.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var matching = favourites.EnumerateArray()
+            .Where(item => FavouriteTitle(item).Contains(show, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(item => FavouriteTitle(item).Equals(show, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        foreach (var favourite in matching)
+        {
+            var type = GetString(favourite, "type");
+            var target = GetString(favourite, "path");
+            if (type == "window" && IsSafeFavouriteVideoWindow(favourite))
+                target ??= GetString(favourite, "windowparameter");
+            var addonId = target is null ? null : GetPluginAddonId(target);
+            if (type != "window" || target is null || addonId is null) continue;
+
+            var items = await ReadAddonDirectoryAsync(instance, target, cancellationToken);
+            var candidate = SelectNextEpisode(items, addonId, FavouriteTitle(favourite));
+            if (candidate is not null)
+                return new NextEpisodeResolution("favourite", candidate.SelectionBasis, candidate.Candidate);
+        }
+        return null;
+    }
+
+    private async Task<NextEpisodeResolution?> ResolveLibraryEpisodesAsync(
+        RegisteredKodiInstance instance,
+        string show,
+        CancellationToken cancellationToken)
+    {
+        var shows = await instance.Client.CallAsync("VideoLibrary.GetTVShows", writer =>
+        {
+            WriteStringArray(writer, "properties", ["title"]);
+            WriteSearchFilter(writer, [new SearchFilterRule("title", "contains", show)]);
+            WriteLimits(writer, 0, 25);
+        }, cancellationToken);
+        if (!shows.TryGetProperty("tvshows", out var values) || values.ValueKind != JsonValueKind.Array) return null;
+        var selectedShow = values.EnumerateArray()
+            .Where(value => GetInt(value, "tvshowid") is not null)
+            .OrderByDescending(value => (GetString(value, "label") ?? GetString(value, "title") ?? string.Empty)
+                .Equals(show, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault();
+        if (selectedShow.ValueKind == JsonValueKind.Undefined || GetInt(selectedShow, "tvshowid") is not { } tvShowId)
+            return null;
+
+        var episodes = await instance.Client.CallAsync("VideoLibrary.GetEpisodes", writer =>
+        {
+            writer.WriteNumber("tvshowid", tvShowId);
+            WriteStringArray(writer, "properties", ["title", "showtitle", "season", "episode", "playcount", "resume", "file"]);
+            WriteLimits(writer, 0, 200);
+            WriteSort(writer, "episode");
+        }, cancellationToken);
+        var candidate = SelectNextEpisode(GetArray(episodes, "episodes"), null, show);
+        return candidate is null ? null : new NextEpisodeResolution("library", candidate.SelectionBasis, candidate.Candidate);
+    }
+
+    private async Task<NextEpisodeResolution?> ResolveLearnedAddonEpisodesAsync(
+        RegisteredKodiInstance instance,
+        string show,
+        CancellationToken cancellationToken)
+    {
+        var routes = await _learnedRoutes.ListAsync(instance.Alias, cancellationToken);
+        foreach (var route in routes
+                     .Where(route => (route.Actions & HandleAction.Browse) != 0)
+                     .OrderByDescending(route => route.Name.Contains("next", StringComparison.OrdinalIgnoreCase) &&
+                                                 route.Name.Contains("episode", StringComparison.OrdinalIgnoreCase)))
+        {
+            string target;
+            if (route.Parameter is null)
+            {
+                if (!route.Name.Contains("next", StringComparison.OrdinalIgnoreCase) &&
+                    !route.Name.Contains("episode", StringComparison.OrdinalIgnoreCase)) continue;
+                target = route.Target;
+            }
+            else
+            {
+                if (!route.Name.Contains("search", StringComparison.OrdinalIgnoreCase) ||
+                    (!route.Name.Contains("tv", StringComparison.OrdinalIgnoreCase) &&
+                     !route.Name.Contains("show", StringComparison.OrdinalIgnoreCase))) continue;
+                target = route.Target.Replace(FileLearnedRouteStore.InputPlaceholder, Uri.EscapeDataString(show), StringComparison.Ordinal);
+            }
+            if (GetPluginAddonId(target) is not { } targetAddonId ||
+                !targetAddonId.Equals(route.AddonId, StringComparison.OrdinalIgnoreCase)) continue;
+
+            var firstLevel = await ReadAddonDirectoryAsync(instance, target, cancellationToken);
+            var direct = SelectNextEpisode(firstLevel, route.AddonId, route.AddonName);
+            if (direct is not null)
+                return new NextEpisodeResolution("learned-addon-route", direct.SelectionBasis, direct.Candidate);
+
+            var showItem = firstLevel
+                .Where(item => ItemTitle(item).Contains(show, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(item => ItemTitle(item).Equals(show, StringComparison.OrdinalIgnoreCase))
+                .FirstOrDefault();
+            var showTarget = GetString(showItem, "file");
+            if (showTarget is null || GetPluginAddonId(showTarget) is not { } showAddonId ||
+                !showAddonId.Equals(route.AddonId, StringComparison.OrdinalIgnoreCase)) continue;
+
+            var secondLevel = await ReadAddonDirectoryAsync(instance, showTarget, cancellationToken);
+            var candidate = SelectNextEpisode(secondLevel, route.AddonId, route.AddonName);
+            if (candidate is not null)
+                return new NextEpisodeResolution("learned-addon-route", candidate.SelectionBasis, candidate.Candidate);
+
+            var combined = new List<JsonElement>();
+            foreach (var season in secondLevel.Where(IsDirectoryItem).Take(12))
+            {
+                var seasonTarget = GetString(season, "file");
+                if (seasonTarget is null || !route.AddonId.Equals(GetPluginAddonId(seasonTarget), StringComparison.OrdinalIgnoreCase)) continue;
+                combined.AddRange(await ReadAddonDirectoryAsync(instance, seasonTarget, cancellationToken));
+            }
+            candidate = SelectNextEpisode(combined, route.AddonId, route.AddonName);
+            if (candidate is not null)
+                return new NextEpisodeResolution("learned-addon-route", candidate.SelectionBasis, candidate.Candidate);
+        }
+        return null;
+    }
+
+    private static string FavouriteTitle(JsonElement item) =>
+        GetString(item, "label") ?? GetString(item, "title") ?? string.Empty;
+
+    private static string ItemTitle(JsonElement item) =>
+        GetString(item, "label") ?? GetString(item, "title") ?? string.Empty;
+
+    private static async Task<JsonElement[]> ReadAddonDirectoryAsync(
+        RegisteredKodiInstance instance,
+        string target,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await instance.Client.CallAsync("Files.GetDirectory", writer =>
+            {
+                writer.WriteString("directory", target);
+                writer.WriteString("media", "video");
+                WriteStringArray(writer, "properties", ["title", "year", "playcount", "resume"]);
+                WriteLimits(writer, 0, 200);
+            }, cancellationToken);
+            return GetArray(result, "files");
+        }
+        catch (KodiRpcException exception) when (exception.Kind == KodiFailureKind.Remote)
+        {
+            return [];
+        }
+    }
+
+    private static JsonElement[] GetArray(JsonElement result, string property) =>
+        result.TryGetProperty(property, out var values) && values.ValueKind == JsonValueKind.Array
+            ? values.EnumerateArray().ToArray()
+            : [];
+
+    private static bool IsDirectoryItem(JsonElement item) =>
+        GetString(item, "filetype") == "directory" || (GetString(item, "file")?.EndsWith('/') ?? false);
+
+    private EpisodeSelection? SelectNextEpisode(
+        IEnumerable<JsonElement> items,
+        string? addonId,
+        string? addonName)
+    {
+        var candidates = items.Select((item, index) => CreateEpisodeCandidate(item, index, addonId, addonName))
+            .Where(candidate => candidate is not null)
+            .Cast<EpisodeCandidate>()
+            .ToArray();
+        if (candidates.Length == 0) return null;
+        var available = candidates.Where(candidate => !candidate.IsMarkedUnavailable).ToArray();
+        if (available.Length > 0) candidates = available;
+        var ordered = candidates.OrderBy(candidate => candidate.Season ?? int.MaxValue)
+            .ThenBy(candidate => candidate.Episode ?? int.MaxValue)
+            .ThenBy(candidate => candidate.SourceIndex)
+            .ToArray();
+        var partial = ordered.FirstOrDefault(candidate => candidate.PlayCount <= 0 && candidate.ResumePosition > 0);
+        if (partial is not null) return new EpisodeSelection(partial, "resume-partially-watched");
+        var unwatched = ordered.FirstOrDefault(candidate => candidate.PlayCount <= 0);
+        return unwatched is null ? null : new EpisodeSelection(unwatched, "first-unwatched");
+    }
+
+    private EpisodeCandidate? CreateEpisodeCandidate(
+        JsonElement item,
+        int sourceIndex,
+        string? addonId,
+        string? addonName)
+    {
+        var target = GetString(item, "file");
+        if (string.IsNullOrWhiteSpace(target) || IsDirectoryItem(item)) return null;
+        var type = GetString(item, "type") ?? GetString(item, "mediatype");
+        if (type is not null && type != "episode" && GetString(item, "filetype") != "file") return null;
+        var targetAddonId = GetPluginAddonId(target);
+        if (addonId is not null && !addonId.Equals(targetAddonId, StringComparison.OrdinalIgnoreCase)) return null;
+        var season = GetInt(item, "season") ?? GetQueryInt(target, "season");
+        var episode = GetInt(item, "episode") ?? GetQueryInt(target, "episode") ?? GetQueryInt(target, "ep");
+        var resumePosition = item.TryGetProperty("resume", out var resume) && resume.ValueKind == JsonValueKind.Object
+            ? GetDouble(resume, "position") ?? 0
+            : 0;
+        var label = _safeText.Clean(ItemTitle(item));
+        return new EpisodeCandidate(
+            target,
+            label,
+            season,
+            episode,
+            GetInt(item, "playcount") ?? 0,
+            resumePosition,
+            sourceIndex,
+            (label?.Contains("[COLOR red]", StringComparison.OrdinalIgnoreCase) ?? false),
+            targetAddonId ?? addonId,
+            addonName);
+    }
+
+    private static int? GetQueryInt(string target, string key)
+    {
+        if (!Uri.TryCreate(target, UriKind.Absolute, out var uri)) return null;
+        foreach (var segment in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = segment.IndexOf('=');
+            if (separator <= 0) continue;
+            string decodedKey;
+            string decodedValue;
+            try
+            {
+                decodedKey = Uri.UnescapeDataString(segment[..separator]);
+                decodedValue = Uri.UnescapeDataString(segment[(separator + 1)..]);
+            }
+            catch (UriFormatException)
+            {
+                continue;
+            }
+            if (decodedKey.Equals(key, StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(decodedValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value >= 0)
+                return value;
+        }
+        return null;
+    }
+
+    private sealed record EpisodeCandidate(
+        string Target,
+        string? Label,
+        int? Season,
+        int? Episode,
+        int PlayCount,
+        double ResumePosition,
+        int SourceIndex,
+        bool IsMarkedUnavailable,
+        string? AddonId,
+        string? AddonName);
+
+    private sealed record NextEpisodeResolution(string Source, string SelectionBasis, EpisodeCandidate Candidate);
+
+    private sealed record EpisodeSelection(EpisodeCandidate Candidate, string SelectionBasis);
 
     private async Task<PlayerSummary> GetPlayerAsync(RegisteredKodiInstance instance, JsonElement player, CancellationToken cancellationToken)
     {
@@ -1092,28 +1601,64 @@ public sealed partial class KodiService
             "albums" => "album",
             _ => null,
         };
-        var isFolder = context is "sources" or "tvshows" or "seasons" || fileType == "directory" || (target?.EndsWith('/') ?? false);
-        var isPlayable = context is "movies" or "episodes" or "songs" || fileType == "file" || type is "movie" or "episode" or "song" or "musicvideo";
+        var isSafeFavouriteWindow = context == "favourites" && type == "window" && IsSafeFavouriteVideoWindow(item);
+        if (target is null && isSafeFavouriteWindow) target = GetString(item, "windowparameter");
+        isSafeFavouriteWindow = isSafeFavouriteWindow && target is not null && GetPluginAddonId(target) is not null;
+        var isFolder = context is "sources" or "tvshows" or "seasons" || fileType == "directory" || (target?.EndsWith('/') ?? false) || isSafeFavouriteWindow;
+        var isPlayable = context is "movies" or "episodes" or "songs" || fileType == "file" || type is "movie" or "episode" or "song" or "musicvideo" ||
+                         (context == "favourites" && type == "media");
+        var title = GetString(item, "label") ?? GetString(item, "title");
         string? handle = null;
+        var availableActions = HandleAction.None;
         if (context == "tvshows" && GetInt(item, "tvshowid") is { } tvShowId)
         {
-            handle = _handles.Create(alias, tvShowId.ToString(CultureInfo.InvariantCulture), media, "tvshow", HandleAction.LibraryBrowse);
+            availableActions = HandleAction.LibraryBrowse;
+            handle = _handles.Create(alias, tvShowId.ToString(CultureInfo.InvariantCulture), media, "tvshow", availableActions);
         }
         else if (context == "seasons" && GetInt(item, "tvshowid") is { } seasonTvShowId && GetInt(item, "season") is { } seasonNumber)
         {
-            handle = _handles.Create(alias, $"{seasonTvShowId.ToString(CultureInfo.InvariantCulture)}:{seasonNumber.ToString(CultureInfo.InvariantCulture)}", media, "tvseason", HandleAction.LibraryBrowse);
+            availableActions = HandleAction.LibraryBrowse;
+            handle = _handles.Create(alias, $"{seasonTvShowId.ToString(CultureInfo.InvariantCulture)}:{seasonNumber.ToString(CultureInfo.InvariantCulture)}", media, "tvseason", availableActions);
         }
-        else if (!string.IsNullOrWhiteSpace(target))
+        else
         {
-            var actions = (isFolder ? HandleAction.Browse : HandleAction.None) | (isPlayable ? HandleAction.Play : HandleAction.None);
+            var actions = string.IsNullOrWhiteSpace(target)
+                ? HandleAction.None
+                : (isFolder ? HandleAction.Browse : HandleAction.None) | (isPlayable ? HandleAction.Play : HandleAction.None);
+            var libraryId = type == "episode" ? GetInt(item, "episodeid") : null;
+            if (libraryId is not null) actions |= HandleAction.SetWatchState;
+            FavouriteDescriptor? favourite = null;
+            if (!string.IsNullOrWhiteSpace(target) && !string.IsNullOrWhiteSpace(title))
+            {
+                if (context == "favourites" && type == "media")
+                {
+                    favourite = new FavouriteDescriptor(title, "media", Path: target, Thumbnail: GetString(item, "thumbnail"));
+                    actions |= HandleAction.RemoveFavourite;
+                }
+                else if (context == "favourites" && isSafeFavouriteWindow)
+                {
+                    favourite = new FavouriteDescriptor(title, "window", Window: GetString(item, "window"),
+                        WindowParameter: target, Thumbnail: GetString(item, "thumbnail"));
+                    actions |= HandleAction.RemoveFavourite;
+                }
+                else if (context != "favourites")
+                {
+                    favourite = isFolder && GetPluginAddonId(target) is not null
+                        ? new FavouriteDescriptor(title, "window", Window: "videos", WindowParameter: target)
+                        : new FavouriteDescriptor(title, "media", Path: target);
+                    actions |= HandleAction.AddFavourite;
+                }
+            }
             if (actions != HandleAction.None)
             {
-                var targetAddonId = GetPluginAddonId(target);
+                availableActions = actions;
+                var targetAddonId = target is null ? null : GetPluginAddonId(target);
                 var effectiveAddonId = targetAddonId ?? addonId;
                 var effectiveAddonName = targetAddonId is null || targetAddonId.Equals(addonId, StringComparison.OrdinalIgnoreCase)
                     ? addonName
                     : null;
-                handle = _handles.Create(alias, target, media, type ?? "item", actions, effectiveAddonId, effectiveAddonName);
+                handle = _handles.Create(alias, target ?? string.Empty, media, type ?? "item", actions, effectiveAddonId, effectiveAddonName,
+                    libraryId: libraryId, favourite: favourite);
             }
         }
 
@@ -1132,8 +1677,17 @@ public sealed partial class KodiService
             resumePosition = GetDouble(resume, "position");
             resumeTotal = GetDouble(resume, "total");
         }
+        var playCount = GetInt(item, "playcount");
+        var hasWatchState = context is "episodes" or "movies" || type is "episode" or "movie";
+        var watchState = hasWatchState
+            ? playCount is > 0
+                ? "watched"
+                : resumePosition is > 0
+                    ? "partially-watched"
+                    : "unwatched"
+            : null;
         return new MediaItemSummary(
-            _safeText.Clean(GetString(item, "label") ?? GetString(item, "title")),
+            _safeText.Clean(title),
             _safeText.Clean(type, 80),
             GetInt(item, "year"),
             context is "episodes" or "seasons" ? GetInt(item, "season") : null,
@@ -1144,13 +1698,44 @@ public sealed partial class KodiService
             _safeText.Clean(GetString(item, "album")),
             genres,
             GetInt(item, "duration") ?? GetInt(item, "runtime"),
-            GetInt(item, "playcount"),
+            playCount,
+            watchState,
             resumePosition,
             resumeTotal,
             hasArtwork,
             isFolder,
             isPlayable,
-            handle);
+            handle,
+            DescribeItemActions(availableActions),
+            FavouriteUnsupportedReason(context, type, target, title, isSafeFavouriteWindow, handle));
+    }
+
+    private static string[] DescribeItemActions(HandleAction actions)
+    {
+        var result = new List<string>(5);
+        if ((actions & HandleAction.Browse) != 0) result.Add("browse");
+        if ((actions & HandleAction.Play) != 0) result.Add("play");
+        if ((actions & HandleAction.LibraryBrowse) != 0) result.Add("browse-tv-show");
+        if ((actions & HandleAction.SetWatchState) != 0) result.Add("set-watch-state");
+        if ((actions & HandleAction.AddFavourite) != 0) result.Add("add-favourite");
+        if ((actions & HandleAction.RemoveFavourite) != 0) result.Add("remove-favourite");
+        return [.. result];
+    }
+
+    private static string? FavouriteUnsupportedReason(
+        string? context,
+        string? type,
+        string? target,
+        string? title,
+        bool isSafeFavouriteWindow,
+        string? handle)
+    {
+        if (context != "favourites" || handle is not null) return null;
+        if (type is "script" or "androidapp") return "Executable favourite types are intentionally non-actionable.";
+        if (type == "window" && !isSafeFavouriteWindow) return "This favourite window is outside the safe video add-on boundary.";
+        if (string.IsNullOrWhiteSpace(target)) return "Kodi did not return a supported favourite target.";
+        if (string.IsNullOrWhiteSpace(title)) return "Kodi did not return a usable favourite title.";
+        return "Kodi did not return a supported structured action for this favourite.";
     }
 
     private LearnedRouteSummary CreateLearnedRouteSummary(LearnedRouteEntry route)
@@ -1337,6 +1922,30 @@ public sealed partial class KodiService
         if (normalized.Length == 0 || normalized.Length > maximumLength || normalized.Any(char.IsControl))
             throw new McpException($"{label} must contain 1 to {maximumLength} printable characters when provided.");
         return normalized;
+    }
+
+    private static string? NormalizeFavouriteType(string? favouriteType)
+    {
+        if (favouriteType is null) return null;
+        return favouriteType.Trim().ToLowerInvariant() switch
+        {
+            "media" => "media",
+            "window" => "window",
+            "script" => "script",
+            "androidapp" => "androidapp",
+            _ => throw new McpException("Favourite type must be media, window, script, or androidapp when provided."),
+        };
+    }
+
+    private static bool IsSafeFavouriteVideoWindow(JsonElement item) =>
+        (GetString(item, "window") ?? string.Empty).Trim().ToLowerInvariant() is "video" or "videos" or "10025";
+
+    private static string GetWatchState(JsonElement item)
+    {
+        if (GetInt(item, "playcount") is > 0) return "watched";
+        return item.TryGetProperty("resume", out var resume) && resume.ValueKind == JsonValueKind.Object && GetDouble(resume, "position") is > 0
+            ? "partially-watched"
+            : "unwatched";
     }
 
     private static bool TryParseSeasonTarget(string target, out int tvShowId, out int season)

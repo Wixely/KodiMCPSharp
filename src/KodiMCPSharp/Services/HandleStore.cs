@@ -14,7 +14,18 @@ public enum HandleAction
     LibraryBrowse = 4,
     ManageLearnedRoute = 8,
     BindLearnedRoute = 16,
+    SetWatchState = 32,
+    AddFavourite = 64,
+    RemoveFavourite = 128,
 }
+
+public sealed record FavouriteDescriptor(
+    string Title,
+    string Type,
+    string? Path = null,
+    string? Window = null,
+    string? WindowParameter = null,
+    string? Thumbnail = null);
 
 public sealed record HandleEntry(
     string InstanceAlias,
@@ -26,7 +37,9 @@ public sealed record HandleEntry(
     string? AddonId = null,
     string? AddonName = null,
     string? LearnedRouteName = null,
-    HandleAction TemplateResultActions = HandleAction.None);
+    HandleAction TemplateResultActions = HandleAction.None,
+    int? LibraryId = null,
+    FavouriteDescriptor? Favourite = null);
 
 public interface IHandleStore
 {
@@ -39,7 +52,9 @@ public interface IHandleStore
         string? addonId = null,
         string? addonName = null,
         string? learnedRouteName = null,
-        HandleAction templateResultActions = HandleAction.None);
+        HandleAction templateResultActions = HandleAction.None,
+        int? libraryId = null,
+        FavouriteDescriptor? favourite = null);
     HandleEntry Resolve(string handle, string instanceAlias, HandleAction requiredAction);
     int Count { get; }
 }
@@ -78,7 +93,9 @@ public sealed class InMemoryHandleStore : IHandleStore
         string? addonId = null,
         string? addonName = null,
         string? learnedRouteName = null,
-        HandleAction templateResultActions = HandleAction.None)
+        HandleAction templateResultActions = HandleAction.None,
+        int? libraryId = null,
+        FavouriteDescriptor? favourite = null)
     {
         lock (_sync)
         {
@@ -96,7 +113,7 @@ public sealed class InMemoryHandleStore : IHandleStore
             } while (_entries.ContainsKey(handle));
             _entries.Add(handle, new HandleEntry(
                 instanceAlias, target, media, kind, actions, _timeProvider.GetUtcNow().Add(_lifetime),
-                addonId, addonName, learnedRouteName, templateResultActions));
+                addonId, addonName, learnedRouteName, templateResultActions, libraryId, favourite));
             return handle;
         }
     }

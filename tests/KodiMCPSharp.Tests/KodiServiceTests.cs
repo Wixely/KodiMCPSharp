@@ -27,6 +27,8 @@ public sealed class KodiServiceTests
 
         Assert.Equal("[redacted]", result.Items.Single().Label);
         Assert.StartsWith("h_", result.Items.Single().Handle, StringComparison.Ordinal);
+        Assert.Contains("play", result.Items.Single().AvailableActions);
+        Assert.Contains("add-favourite", result.Items.Single().AvailableActions);
         Assert.DoesNotContain(rawTarget, serialized, StringComparison.Ordinal);
     }
 
@@ -84,6 +86,213 @@ public sealed class KodiServiceTests
         Assert.Equal(2, result.End);
         Assert.Equal(3, result.Total);
         Assert.Equal("Two", result.Items.Single().Label);
+    }
+
+    [Fact]
+    public async Task FavouriteSearch_IsCaseInsensitiveFilteredAndPagedLocally()
+    {
+        string? requestedType = null;
+        var wroteLimits = false;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Favourites.GetFavourites" => CaptureParameters(write, root =>
+            {
+                requestedType = root.GetProperty("type").GetString();
+                wroteLimits = root.TryGetProperty("limits", out _);
+            }, """
+                {"favourites":[
+                  {"label":"Other","type":"media","path":"synthetic-other"},
+                  {"label":"STAR One","type":"media","path":"synthetic-one"},
+                  {"label":"A star Two","type":"media","path":"synthetic-two"}
+                ]}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.SearchFavouritesAsync("room", "star", "MEDIA", 1, 1, TestContext.Current.CancellationToken);
+
+        Assert.Equal("media", requestedType);
+        Assert.False(wroteLimits);
+        Assert.Equal(1, result.Start);
+        Assert.Equal(2, result.End);
+        Assert.Equal(2, result.Total);
+        var item = Assert.Single(result.Items);
+        Assert.Equal("A star Two", item.Label);
+        Assert.StartsWith("h_", item.Handle, StringComparison.Ordinal);
+        Assert.True(item.IsPlayable);
+        Assert.Contains("play", item.AvailableActions);
+        Assert.Contains("remove-favourite", item.AvailableActions);
+        Assert.Null(item.UnsupportedReason);
+        Assert.DoesNotContain("synthetic-two", JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FavouriteSearch_UsesKodiTitleAndSafelyHandlesVideoAddonWindows()
+    {
+        const string target = "plugin://plugin.video.synthetic/?action=show";
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "Favourites.GetFavourites" => Element($$"""
+                {"favourites":[{"title":"Synthetic Lantern","type":"window","window":"videos","windowparameter":"{{target}}"}]}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.SearchFavouritesAsync("room", "lantern", "window", 0, 25, TestContext.Current.CancellationToken);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal("Synthetic Lantern", item.Label);
+        Assert.True(item.IsFolder);
+        Assert.False(item.IsPlayable);
+        Assert.StartsWith("h_", item.Handle, StringComparison.Ordinal);
+        Assert.Contains("browse", item.AvailableActions);
+        Assert.Contains("remove-favourite", item.AvailableActions);
+        Assert.Null(item.UnsupportedReason);
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AddFavourite_UsesMediaHandleAndVerifiesPresence()
+    {
+        const string target = "synthetic-library-target";
+        var favouriteReads = 0;
+        JsonElement? addParameters = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetMovies" => Element($$"""
+                {"limits":{"start":0,"end":1,"total":1},"movies":[{"label":"Synthetic Film","type":"movie","file":"{{target}}"}]}
+                """),
+            "Favourites.GetFavourites" => Element(favouriteReads++ == 0
+                ? "{\"favourites\":[]}"
+                : $$"""{"favourites":[{"title":"Synthetic Film","type":"media","path":"{{target}}"}]}"""),
+            "Favourites.AddFavourite" => CaptureParameters(write, root => addParameters = root.Clone(), "\"OK\""),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowFavourites = true);
+        var movies = await service.SearchLibraryAsync("room", "Synthetic", "movies", null, null, 0, 25, TestContext.Current.CancellationToken);
+
+        var result = await service.AddFavouriteAsync("room", Assert.Single(movies.Items).Handle!, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Accepted);
+        Assert.True(result.Observed);
+        Assert.Equal("observed-complete", result.Completion);
+        Assert.Equal("Synthetic Film", addParameters?.GetProperty("title").GetString());
+        Assert.Equal("media", addParameters?.GetProperty("type").GetString());
+        Assert.Equal(target, addParameters?.GetProperty("path").GetString());
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AddFavourite_WhenAlreadyPresent_DoesNotToggle()
+    {
+        var toggles = 0;
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "Favourites.GetFavourites" => Element("{\"favourites\":[{\"title\":\"Synthetic Film\",\"type\":\"media\",\"path\":\"synthetic-target\"}]}"),
+            "Favourites.AddFavourite" => throw new InvalidOperationException($"Unexpected toggle {++toggles}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var (service, handles) = CreateControlServiceWithHandles(fake, controls => controls.AllowFavourites = true);
+        var handle = handles.Create("room", "synthetic-target", "video", "movie",
+            HandleAction.Play | HandleAction.AddFavourite,
+            favourite: new FavouriteDescriptor("Synthetic Film", "media", Path: "synthetic-target"));
+
+        var result = await service.AddFavouriteAsync("room", handle, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Accepted);
+        Assert.True(result.Observed);
+        Assert.Equal("already-in-requested-state", result.Completion);
+        Assert.Equal(0, toggles);
+    }
+
+    [Fact]
+    public async Task RemoveFavourite_WhenAlreadyAbsent_DoesNotToggle()
+    {
+        var toggles = 0;
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "Favourites.GetFavourites" => Element("{\"favourites\":[]}"),
+            "Favourites.AddFavourite" => throw new InvalidOperationException($"Unexpected toggle {++toggles}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var (service, handles) = CreateControlServiceWithHandles(fake, controls => controls.AllowFavourites = true);
+        var handle = handles.Create("room", "synthetic-target", "video", "media",
+            HandleAction.Play | HandleAction.RemoveFavourite,
+            favourite: new FavouriteDescriptor("Synthetic Film", "media", Path: "synthetic-target"));
+
+        var result = await service.RemoveFavouriteAsync("room", handle, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Accepted);
+        Assert.True(result.Observed);
+        Assert.Equal("already-in-requested-state", result.Completion);
+        Assert.Equal(0, toggles);
+    }
+
+    [Fact]
+    public async Task RemoveFavourite_UsesExactHandleAndVerifiesAbsence()
+    {
+        const string target = "plugin://plugin.video.synthetic/?mode=show";
+        var favouriteReads = 0;
+        var toggles = 0;
+        var present = $$"""{"favourites":[{"title":"Synthetic Show","type":"window","window":"videos","windowparameter":"{{target}}"}]}""";
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "Favourites.GetFavourites" => Element(favouriteReads++ < 2 ? present : "{\"favourites\":[]}"),
+            "Favourites.AddFavourite" => Element(++toggles == 1 ? "\"OK\"" : "\"unexpected\""),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowFavourites = true);
+        var favourites = await service.ListFavouritesAsync("room", 0, 25, TestContext.Current.CancellationToken);
+
+        var result = await service.RemoveFavouriteAsync("room", Assert.Single(favourites.Items).Handle!, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Accepted);
+        Assert.True(result.Observed);
+        Assert.Equal(1, toggles);
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RemoveFavourite_RefusesDuplicateExactMatchesWithoutToggling()
+    {
+        const string favourites = "{\"favourites\":[{\"title\":\"Duplicate\",\"type\":\"media\",\"path\":\"synthetic\"},{\"title\":\"Duplicate\",\"type\":\"media\",\"path\":\"synthetic\"}]}";
+        var toggles = 0;
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "Favourites.GetFavourites" => Element(favourites),
+            "Favourites.AddFavourite" => throw new InvalidOperationException($"Unexpected toggle {++toggles}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowFavourites = true);
+        var listed = await service.ListFavouritesAsync("room", 0, 25, TestContext.Current.CancellationToken);
+
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() =>
+            service.RemoveFavouriteAsync("room", listed.Items[0].Handle!, TestContext.Current.CancellationToken));
+
+        Assert.Contains("duplicate", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, toggles);
+    }
+
+    [Fact]
+    public async Task FavouriteChanges_AreDisabledByDefaultAndExecutableFavouritesHaveNoHandle()
+    {
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "Favourites.GetFavourites" => Element("{\"favourites\":[{\"title\":\"Unsafe\",\"type\":\"script\",\"path\":\"script.synthetic\"}]}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, _ => { });
+        var listed = await service.ListFavouritesAsync("room", 0, 25, TestContext.Current.CancellationToken);
+
+        var item = Assert.Single(listed.Items);
+        Assert.Null(item.Handle);
+        Assert.Empty(item.AvailableActions);
+        Assert.Contains("non-actionable", item.UnsupportedReason, StringComparison.Ordinal);
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() =>
+            service.AddFavouriteAsync("room", "h_untrusted", TestContext.Current.CancellationToken));
+        Assert.Contains("AllowFavourites", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -251,7 +460,87 @@ public sealed class KodiServiceTests
         Assert.Equal("inprogress", field);
         Assert.Equal("true", filterOperator);
         Assert.Equal("descending", sortOrder);
-        Assert.Equal(120, Assert.Single(result.Items).ResumePositionSeconds);
+        var item = Assert.Single(result.Items);
+        Assert.Equal(120, item.ResumePositionSeconds);
+        Assert.Equal("partially-watched", item.WatchState);
+    }
+
+    [Fact]
+    public async Task EpisodeResults_ReportExplicitWatchState()
+    {
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "VideoLibrary.GetRecentlyAddedEpisodes" => Element("""
+                {"limits":{"start":0,"end":3,"total":3},"episodes":[
+                  {"label":"Watched","type":"episode","file":"synthetic-watched","playcount":1,"resume":{"position":0,"total":600}},
+                  {"label":"Partial","type":"episode","file":"synthetic-partial","playcount":0,"resume":{"position":120,"total":600}},
+                  {"label":"Unwatched","type":"episode","file":"synthetic-unwatched","playcount":0,"resume":{"position":0,"total":600}}
+                ]}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.ListRecentAsync("room", "episodes", 0, 25, TestContext.Current.CancellationToken);
+
+        Assert.Collection(result.Items,
+            item => Assert.Equal("watched", item.WatchState),
+            item => Assert.Equal("partially-watched", item.WatchState),
+            item => Assert.Equal("unwatched", item.WatchState));
+    }
+
+    [Fact]
+    public async Task EpisodeWatchState_IsBlockedByDefault()
+    {
+        var service = CreateService(new FakeKodiClient((_, _) => Element("{}")));
+
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() =>
+            service.SetEpisodeWatchStateAsync("room", "h_invalid", "watched", TestContext.Current.CancellationToken));
+
+        Assert.Contains("ReadOnly", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task EpisodeWatchState_UsesOpaqueLibraryIdClearsResumeAndVerifies()
+    {
+        int? changedEpisodeId = null;
+        int? changedPlayCount = null;
+        double? changedResumePosition = null;
+        double? changedResumeTotal = null;
+        int? verifiedEpisodeId = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetRecentlyAddedEpisodes" => Element("""
+                {"limits":{"start":0,"end":1,"total":1},"episodes":[{"label":"Episode","type":"episode","episodeid":77,"file":"synthetic-episode","playcount":0}]}
+                """),
+            "VideoLibrary.SetEpisodeDetails" => CaptureParameters(write, root =>
+            {
+                changedEpisodeId = root.GetProperty("episodeid").GetInt32();
+                changedPlayCount = root.GetProperty("playcount").GetInt32();
+                changedResumePosition = root.GetProperty("resume").GetProperty("position").GetDouble();
+                changedResumeTotal = root.GetProperty("resume").GetProperty("total").GetDouble();
+            }, "\"OK\""),
+            "VideoLibrary.GetEpisodeDetails" => CaptureParameters(write, root =>
+            {
+                verifiedEpisodeId = root.GetProperty("episodeid").GetInt32();
+            }, "{\"episodedetails\":{\"playcount\":1,\"resume\":{\"position\":0,\"total\":0}}}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowWatchState = true);
+        var episodes = await service.ListRecentAsync("room", "episodes", 0, 25, TestContext.Current.CancellationToken);
+        var handle = Assert.Single(episodes.Items).Handle!;
+
+        var result = await service.SetEpisodeWatchStateAsync("room", handle, "watched", TestContext.Current.CancellationToken);
+
+        Assert.Equal(77, changedEpisodeId);
+        Assert.Equal(1, changedPlayCount);
+        Assert.Equal(0, changedResumePosition);
+        Assert.Equal(0, changedResumeTotal);
+        Assert.Equal(77, verifiedEpisodeId);
+        Assert.True(result.Accepted);
+        Assert.True(result.Observed);
+        Assert.Equal("watched", result.ObservedState);
+        Assert.DoesNotContain("77", JsonSerializer.Serialize(result), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -386,6 +675,113 @@ public sealed class KodiServiceTests
         Assert.True(result.Observed);
         Assert.Equal("playing", result.State);
         Assert.Equal(1, result.PlayerId);
+    }
+
+    [Fact]
+    public async Task PlayNextEpisode_PrefersFavouriteAndSelectsFirstUnwatchedEpisode()
+    {
+        const string favouriteTarget = "plugin://plugin.video.synthetic/?show=Example";
+        const string episodeTarget = "plugin://plugin.video.synthetic/?season=1&episode=2";
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Favourites.GetFavourites" => Element($$$"""
+                {"favourites":[{"title":"Example Show","type":"window","window":"videos","windowparameter":"{{{favouriteTarget}}}"}]}
+                """),
+            "Files.GetDirectory" => Element($$$"""
+                {"files":[
+                  {"label":"Pilot","type":"episode","filetype":"file","file":"plugin://plugin.video.synthetic/?season=1\u0026episode=1","playcount":1},
+                  {"label":"Second","type":"episode","filetype":"file","file":"{{{episodeTarget.Replace("&", "\\u0026", StringComparison.Ordinal)}}}","playcount":0}
+                ]}
+                """),
+            "Player.Open" => CaptureParameters(write, root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayNextEpisodeAsync("room", "Example Show", TestContext.Current.CancellationToken);
+
+        Assert.Equal("favourite", result.Source);
+        Assert.Equal("first-unwatched", result.SelectionBasis);
+        Assert.Equal(1, result.SeasonNumber);
+        Assert.Equal(2, result.EpisodeNumber);
+        Assert.Equal(episodeTarget, openedTarget);
+        Assert.True(result.Observed);
+        Assert.DoesNotContain(episodeTarget, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlayNextEpisode_FallsBackToLibraryAndResumesPartialEpisode()
+    {
+        const string episodeTarget = "synthetic-library-episode";
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Favourites.GetFavourites" => Element("{\"favourites\":[]}"),
+            "VideoLibrary.GetTVShows" => Element("{\"tvshows\":[{\"label\":\"Example Show\",\"tvshowid\":42}]}"),
+            "VideoLibrary.GetEpisodes" => Element($$$"""
+                {"episodes":[{"label":"Partial","type":"episode","file":"{{{episodeTarget}}}","season":2,"episode":3,"playcount":0,"resume":{"position":120,"total":600}}]}
+                """),
+            "Player.Open" => CaptureParameters(write, root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayNextEpisodeAsync("room", "Example Show", TestContext.Current.CancellationToken);
+
+        Assert.Equal("library", result.Source);
+        Assert.Equal("resume-partially-watched", result.SelectionBasis);
+        Assert.Equal(episodeTarget, openedTarget);
+    }
+
+    [Fact]
+    public async Task PlayNextEpisode_UsesBoundedLearnedTvSearchRouteAsFinalFallback()
+    {
+        const string searchTarget = "plugin://plugin.video.synthetic/?mode=search&query=__KODIMCPSHARP_ROUTE_INPUT__";
+        const string showTarget = "plugin://plugin.video.synthetic/?mode=show&id=42";
+        const string episodeTarget = "plugin://plugin.video.synthetic/?mode=play&season=1&episode=1";
+        var directoryReads = 0;
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Favourites.GetFavourites" => Element("{\"favourites\":[]}"),
+            "VideoLibrary.GetTVShows" => Element("{\"tvshows\":[]}"),
+            "Files.GetDirectory" when directoryReads++ == 0 => Element($$$"""
+                {"files":[{"label":"Example Show","filetype":"directory","file":"{{{showTarget.Replace("&", "\\u0026", StringComparison.Ordinal)}}}"}]}
+                """),
+            "Files.GetDirectory" => Element($$$"""
+                {"files":[{"label":"Pilot","type":"episode","filetype":"file","file":"{{{episodeTarget.Replace("&", "\\u0026", StringComparison.Ordinal)}}}","playcount":0}]}
+                """),
+            "Player.Open" => CaptureParameters(write, root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var routeStore = new TestLearnedRouteStore();
+        await routeStore.SaveAsync(new LearnedRouteEntry(
+            "room", "plugin.video.synthetic", "Synthetic", "search_tvshows", searchTarget,
+            "files", "directory", HandleAction.Browse, DateTimeOffset.UtcNow,
+            new LearnedRouteParameter("input", "string", 200)), TestContext.Current.CancellationToken);
+        var options = new KodiOptions
+        {
+            DefaultAlias = "room",
+            ReadOnly = false,
+            Controls = new KodiControlOptions { AllowPlayback = true },
+            Handles = new HandleOptions { LifetimeMinutes = 15, Capacity = 100 },
+        };
+        var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", fake)], "room");
+        var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
+        var service = new KodiService(registry, handles, routeStore, Options.Create(options), new SafeText(), TimeProvider.System);
+
+        var result = await service.PlayNextEpisodeAsync("room", "Example Show", TestContext.Current.CancellationToken);
+
+        Assert.Equal("learned-addon-route", result.Source);
+        Assert.Equal(episodeTarget, openedTarget);
+        Assert.Equal(2, directoryReads);
     }
 
     [Fact]
