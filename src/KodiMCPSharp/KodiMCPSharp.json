@@ -18,7 +18,9 @@
       "AllowPlaylists": false,
       "AllowFullscreenVideo": false,
       "AllowWatchState": false,
-      "AllowFavourites": false
+      "AllowFavourites": false,
+      "AllowLibraryScan": false,
+      "AllowLibraryClean": false
     },
     "RequestTimeoutSeconds": 10,
     "MaximumResponseBytes": 2097152,

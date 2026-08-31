@@ -193,6 +193,14 @@ public sealed record MusicPlaybackResult(
     int? PlayerId,
     string? State);
 
+public sealed record LibraryMaintenanceResult(
+    string Alias,
+    string Domain,
+    string Action,
+    bool ShowDialogs,
+    bool Accepted,
+    string Completion);
+
 public sealed record PageSummary(
     string Alias,
     int Start,

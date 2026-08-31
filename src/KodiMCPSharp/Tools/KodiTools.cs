@@ -312,6 +312,17 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.ForgetAddonRouteAsync(alias, handle, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_library_maintenance"),
+     Description("Start a whole-library video or music scan/clean using closed inputs. Scan and clean have separate disabled-by-default gates; no path or directory can be supplied.")]
+    public static async Task<string> MaintainLibrary(
+        KodiService service,
+        [Description("Closed library domain: video or music.")] string domain,
+        [Description("Closed maintenance action: scan or clean.")] string action,
+        [Description("Whether Kodi should display its progress/dialog UI.")] bool showDialogs = false,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.MaintainLibraryAsync(alias, domain, action, showDialogs, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_play_item"),
      Description("Play one server-issued playable handle and verify the observed player state. Requires Kodi:ReadOnly=false and Kodi:Controls:AllowPlayback=true; both block playback by default.")]
     public static async Task<string> PlayItem(

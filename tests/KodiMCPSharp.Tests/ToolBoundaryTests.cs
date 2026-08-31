@@ -19,7 +19,7 @@ public sealed class ToolBoundaryTests
         Assert.Equal(
         [
             "kodi_add_favourite", "kodi_bind_addon_route", "kodi_browse", "kodi_browse_movie_set", "kodi_browse_tv_show", "kodi_bulk_set_episode_watch_state", "kodi_capture_current_addon_page", "kodi_check_addon_routes", "kodi_forget_addon_route", "kodi_get_capabilities",
-            "kodi_get_queue", "kodi_get_status", "kodi_get_video_details", "kodi_list_addon_routes", "kodi_list_addons", "kodi_list_continue_watching",
+            "kodi_get_queue", "kodi_get_status", "kodi_get_video_details", "kodi_library_maintenance", "kodi_list_addon_routes", "kodi_list_addons", "kodi_list_continue_watching",
             "kodi_list_favourites", "kodi_list_genres", "kodi_list_instances", "kodi_list_movie_sets", "kodi_list_recent", "kodi_list_recently_played_music", "kodi_list_recently_watched_movies", "kodi_list_recently_watched_shows", "kodi_list_up_next", "kodi_list_video_tags",
             "kodi_move_queue_item", "kodi_play_episode", "kodi_play_item", "kodi_play_movie", "kodi_play_music", "kodi_play_next_episode", "kodi_play_random", "kodi_player_control",
             "kodi_playlist_add", "kodi_playlist_clear", "kodi_playlist_remove", "kodi_remove_favourite", "kodi_resume",

@@ -97,6 +97,7 @@ public sealed partial class KodiService
             "kodi_bulk_set_episode_watch_state", "kodi_play_movie", "kodi_play_episode", "kodi_play_next_episode",
             "kodi_play_random", "kodi_play_music", "kodi_resume",
             "kodi_add_favourite", "kodi_remove_favourite",
+            "kodi_library_maintenance",
         ],
         ControlGates: new Dictionary<string, bool>
         {
@@ -110,10 +111,12 @@ public sealed partial class KodiService
             ["fullscreenVideo"] = !_options.ReadOnly && _options.Controls.AllowFullscreenVideo,
             ["watchState"] = !_options.ReadOnly && _options.Controls.AllowWatchState,
             ["favourites"] = !_options.ReadOnly && _options.Controls.AllowFavourites,
+            ["libraryScan"] = !_options.ReadOnly && _options.Controls.AllowLibraryScan,
+            ["libraryClean"] = !_options.ReadOnly && _options.Controls.AllowLibraryClean,
             ["learnedRouteWrites"] = _options.LearnedRoutes.AllowWrite,
             ["navigation"] = false,
             ["addonActivation"] = false,
-            ["administration"] = false,
+            ["administration"] = !_options.ReadOnly && (_options.Controls.AllowLibraryScan || _options.Controls.AllowLibraryClean),
         },
         Handles: new HandlePolicySummary(_options.Handles.LifetimeMinutes, _options.Handles.Capacity, false),
         LearnedRoutes: new LearnedRoutePolicySummary(true, _options.LearnedRoutes.AllowWrite, _options.LearnedRoutes.MaximumRoutesPerAddon));
@@ -1080,6 +1083,43 @@ public sealed partial class KodiService
                 playback.Outcome,
                 playback.PlayerId,
                 playback.State);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<LibraryMaintenanceResult> MaintainLibraryAsync(
+        string? alias,
+        string domain,
+        string action,
+        bool showDialogs,
+        CancellationToken cancellationToken)
+    {
+        var normalizedDomain = domain.Trim().ToLowerInvariant();
+        if (normalizedDomain is not ("video" or "music"))
+            throw new McpException("Library-maintenance domain must be video or music.");
+        var normalizedAction = action.Trim().ToLowerInvariant();
+        if (normalizedAction is not ("scan" or "clean"))
+            throw new McpException("Library-maintenance action must be scan or clean.");
+        if (normalizedAction == "scan")
+            EnsureControl(_options.Controls.AllowLibraryScan, "library scan", "AllowLibraryScan");
+        else
+            EnsureControl(_options.Controls.AllowLibraryClean, "library clean", "AllowLibraryClean");
+        var instance = _registry.Resolve(alias);
+        var method = normalizedDomain == "video"
+            ? normalizedAction == "scan" ? "VideoLibrary.Scan" : "VideoLibrary.Clean"
+            : normalizedAction == "scan" ? "AudioLibrary.Scan" : "AudioLibrary.Clean";
+        try
+        {
+            var response = await instance.Client.CallAsync(method, writer =>
+            {
+                writer.WriteBoolean("showdialogs", showDialogs);
+            }, cancellationToken);
+            var accepted = IsAccepted(response);
+            return new LibraryMaintenanceResult(instance.Alias, normalizedDomain, normalizedAction, showDialogs,
+                accepted, accepted ? "accepted-started" : "indeterminate");
         }
         catch (KodiRpcException exception)
         {

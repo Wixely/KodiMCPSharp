@@ -56,6 +56,7 @@ Status: browsing, persistent fixed and single-input learned add-on routes, guard
 | `kodi_playlist_remove` | Remove a validated zero-based playlist position |
 | `kodi_playlist_clear` | Clear the audio or video playlist |
 | `kodi_show_fullscreen_video` | Bring active video back to Kodi's full-screen window and dismiss Kodi overlays/screensaver |
+| `kodi_library_maintenance` | Start a gated whole-library video/music scan or clean |
 
 No tool accepts a JSON-RPC method, JSON payload, endpoint, filesystem path, URL, add-on ID, or `plugin://` path. Ordinary Kodi-originated targets remain in memory behind random, instance-scoped handles that expire after 15 minutes by default. An explicitly learned fixed add-on route persists server-side and is reissued as a fresh opaque handle after restart; its raw target is never returned through MCP.
 
@@ -142,7 +143,7 @@ Configuration is validated at startup:
 - page, response-size, timeout, handle-lifetime, handle-capacity, and learned-route limits have hard bounds;
 - invalid TLS certificates are rejected unless explicitly opted out per instance.
 
-Controls require `Kodi:ReadOnly=false` plus their independent `Kodi:Controls` gate: `AllowPlayback`, `AllowPlayerControl`, `AllowSeek`, `AllowVolume`, `AllowStreamSelection`, `AllowPlaybackModes`, `AllowPlaylists`, `AllowFullscreenVideo`, `AllowWatchState`, or `AllowFavourites`. The checked-in defaults keep `ReadOnly=true` and every gate false. Play, playlist-add, watch-state, and favourite changes accept only short-lived handles returned by search/browse; they cannot accept caller-supplied paths, URLs, or Kodi database IDs. Setting an episode watched or unwatched clears its resume point and verifies the resulting state.
+Controls require `Kodi:ReadOnly=false` plus their independent `Kodi:Controls` gate: `AllowPlayback`, `AllowPlayerControl`, `AllowSeek`, `AllowVolume`, `AllowStreamSelection`, `AllowPlaybackModes`, `AllowPlaylists`, `AllowFullscreenVideo`, `AllowWatchState`, `AllowFavourites`, `AllowLibraryScan`, or `AllowLibraryClean`. The checked-in defaults keep `ReadOnly=true` and every gate false. Play, playlist-add, watch-state, and favourite changes accept only short-lived handles returned by search/browse; they cannot accept caller-supplied paths, URLs, or Kodi database IDs. Library maintenance is whole-library only and likewise has no directory/path input. Setting an episode watched or unwatched clears its resume point and verifies the resulting state.
 
 Learned-route writes use the separate `Kodi:LearnedRoutes:AllowWrite` gate, which is also false in checked-in configuration. This gate may be enabled while Kodi remains read-only because it writes only KodiMCPSharp's local route store.
 
@@ -208,7 +209,7 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 48-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
+- a fixed 49-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
 - atomic learned-route persistence, reload, write gating, add-on provenance, fixed-route reuse, and removal;
 - learned-route add-on availability and opt-in bounded health probes that never invent parameter values or play media;
 - single-string learned search inference, closed search-key policy, encoded binding, and opaque bound-route reuse;
@@ -217,6 +218,7 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - genre discovery, recent and in-progress media views, and opaque TV-show/season hierarchy traversal.
 - bounded movie-set traversal, video-tag discovery, and exact rich movie/TV-show details without returning paths or database IDs.
 - recently played song/album history and exact artist/album playback through private library identifiers.
+- independently gated whole-library video/music scan and clean requests with no path input.
 - case-insensitive favourite search, gated idempotent add/remove with duplicate refusal, plus explicit movie/episode watch-state discovery and gated single/bulk episode updates.
 - one-call movie, exact-episode, next-episode, and resume playback with bounded resolution priority.
 
@@ -224,6 +226,6 @@ Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux an
 
 ## Project status and next action
 
-Synthetic acceptance covers all media-control categories plus queue inspection/reordering, filtered random playback, cross-show up-next selection, movie sets, video tags, rich title details, music history and semantic playback, learned-route health, genre, recent, continue-watching, viewing history, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current source catalogue contains 48 bounded tools. Live acceptance covers every prior discovery domain, opaque TV and movie-set traversal, video-tag, rich-detail, and recently played music retrieval, Kodi 21 plug-in-source listing, generic add-on navigation, Fen Light parameterized search across a process restart, full-screen video restoration, and bounded per-show up-next discovery. Queue reordering, random playback, semantic music playback, favourite mutation, bulk watch state, the complete control matrix, the second learned-search add-on, systemd, and Docker remain to be verified.
+Synthetic acceptance covers all media-control categories plus queue inspection/reordering, filtered random playback, cross-show up-next selection, movie sets, video tags, rich title details, music history and semantic playback, learned-route health, gated library maintenance, genre, recent, continue-watching, viewing history, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current source catalogue contains 49 bounded tools. Live acceptance covers every prior discovery domain, opaque TV and movie-set traversal, video-tag, rich-detail, and recently played music retrieval, Kodi 21 plug-in-source listing, generic add-on navigation, Fen Light parameterized search across a process restart, full-screen video restoration, and bounded per-show up-next discovery. Queue reordering, random playback, semantic music playback, library maintenance, favourite mutation, bulk watch state, the complete control matrix, the second learned-search add-on, systemd, and Docker remain to be verified.
 
 See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.

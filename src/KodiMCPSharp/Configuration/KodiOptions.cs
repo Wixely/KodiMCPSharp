@@ -27,6 +27,8 @@ public sealed class KodiControlOptions
     public bool AllowFullscreenVideo { get; set; }
     public bool AllowWatchState { get; set; }
     public bool AllowFavourites { get; set; }
+    public bool AllowLibraryScan { get; set; }
+    public bool AllowLibraryClean { get; set; }
 }
 
 public sealed class HandleOptions

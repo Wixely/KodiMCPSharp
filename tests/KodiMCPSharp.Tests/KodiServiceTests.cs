@@ -1374,6 +1374,41 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task LibraryScan_UsesClosedWholeLibraryRequestAndIndependentGate()
+    {
+        string? receivedMethod = null;
+        var fake = new FakeKodiClient((method, write) =>
+        {
+            receivedMethod = method;
+            return CaptureParameters(write, root =>
+            {
+                Assert.True(root.GetProperty("showdialogs").GetBoolean());
+                Assert.False(root.TryGetProperty("directory", out _));
+            }, "\"OK\"");
+        });
+        var service = CreateControlService(fake, controls => controls.AllowLibraryScan = true);
+
+        var result = await service.MaintainLibraryAsync("room", "video", "scan", true,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("VideoLibrary.Scan", receivedMethod);
+        Assert.True(result.Accepted);
+        Assert.Equal("accepted-started", result.Completion);
+    }
+
+    [Fact]
+    public async Task LibraryClean_RequiresItsOwnGate()
+    {
+        var service = CreateControlService(new FakeKodiClient((_, _) => Element("\"OK\"")),
+            controls => controls.AllowLibraryScan = true);
+
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() =>
+            service.MaintainLibraryAsync("room", "music", "clean", false, TestContext.Current.CancellationToken));
+
+        Assert.Contains("AllowLibraryClean", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PlayMovie_WithYearUsesUniqueLibraryMatch()
     {
         const string target = "synthetic-library-movie";

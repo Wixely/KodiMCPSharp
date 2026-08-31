@@ -4,7 +4,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 58080,
     [ValidateRange(1, 1000)]
-    [int]$ExpectedToolCount = 48,
+    [int]$ExpectedToolCount = 49,
     [switch]$ProbeAddons,
     [switch]$AllowLocalConfiguration,
     [ValidateRange(0, 3)]
@@ -122,6 +122,7 @@ try {
     if (-not ($tools | Where-Object name -eq 'kodi_list_recently_played_music')) { throw 'Packaged server is missing kodi_list_recently_played_music.' }
     if (-not ($tools | Where-Object name -eq 'kodi_play_music')) { throw 'Packaged server is missing kodi_play_music.' }
     if (-not ($tools | Where-Object name -eq 'kodi_check_addon_routes')) { throw 'Packaged server is missing kodi_check_addon_routes.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_library_maintenance')) { throw 'Packaged server is missing kodi_library_maintenance.' }
     $localConfigurationIncluded = Test-Path (Join-Path $publishDirectory 'KodiMCPSharp.Local.json')
     if ($localConfigurationIncluded -and -not $AllowLocalConfiguration) { throw 'Private local configuration was included in the package.' }
 
