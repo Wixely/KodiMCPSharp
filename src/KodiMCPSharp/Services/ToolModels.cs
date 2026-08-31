@@ -143,6 +143,21 @@ public sealed record PageSummary(
     int Total,
     IReadOnlyList<MediaItemSummary> Items);
 
+public sealed record RecentlyWatchedShowSummary(
+    string Show,
+    string? LastEpisode,
+    int? SeasonNumber,
+    int? EpisodeNumber,
+    string? LastPlayed);
+
+public sealed record RecentlyWatchedShowResult(
+    string Alias,
+    int RequestedLimit,
+    int Returned,
+    int ScannedEpisodes,
+    bool HasMoreHistory,
+    IReadOnlyList<RecentlyWatchedShowSummary> Shows);
+
 public sealed record AddonSummary(
     string? Name,
     string? AddonType,

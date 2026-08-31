@@ -15,6 +15,7 @@ Status: browsing, persistent fixed and single-input learned add-on routes, guard
 | `kodi_list_genres` | List valid movie, TV-show, or music genres |
 | `kodi_list_recent` | List recently added movies, episodes, albums, or songs |
 | `kodi_list_continue_watching` | List in-progress movies, episodes, or TV shows with resume state |
+| `kodi_list_recently_watched_shows` | List unique shows by their most recently played episode |
 | `kodi_browse_tv_show` | Traverse an opaque TV-show handle into seasons and playable episodes |
 | `kodi_list_favourites` | List safe favourite summaries |
 | `kodi_search_favourites` | Search favourite titles with an optional safe type filter |
@@ -65,6 +66,8 @@ Generic add-on compatibility is intentionally directory-based. `kodi_list_addons
 The existing episode, song, and album searches continue to use `query`; year and genre filters are rejected for those domains rather than being silently ignored.
 
 `kodi_list_genres` discovers valid genre names before searching. `kodi_list_recent` and `kodi_list_continue_watching` provide bounded discovery views without requiring a search term. Movie and episode results explicitly report `watched`, `partially-watched`, or `unwatched` from Kodi's play count and resume position. Item summaries advertise their closed `availableActions`, such as `play`, `browse`, `add-favourite`, or `set-watch-state`, so clients do not need to probe invalid mutations. `kodi_search_favourites` performs case-insensitive title search and can constrain Kodi's closed favourite types (`media`, `window`, `script`, or `androidapp`) without returning their executable targets; unsupported favourite types include a bounded reason and no handle. TV-show results carry an opaque library handle; pass it to `kodi_browse_tv_show` to list seasons, then pass a returned season handle to the same tool to list playable episodes. Kodi database identifiers and episode paths remain server-side.
+
+`kodi_list_recently_watched_shows` is the viewing-history view. It reads up to 500 played episodes in descending Kodi `lastplayed` order, deduplicates them by show while preserving that order, and returns the latest episode and timestamp for up to 50 unique shows. This is distinct from `kodi_list_recent`, which means recently added media, and `kodi_list_continue_watching`, which means unfinished media.
 
 `kodi_play_next_episode` is the low-call path for requests such as “play the next episode of Example Show.” One MCP call performs a favourites-first lookup, then falls back to the Kodi TV library, and finally to bounded learned add-on routes. It resumes a partially watched episode before choosing the first unwatched episode in season/episode order. Safe video-window favourites and add-on routes remain server-observed; the agent supplies only a show title. Generic add-on fallback is available only when a browse-capable `next episodes` route or parameterized TV-search route has already been learned. KodiMCPSharp does not crawl arbitrary add-ons, accept raw plug-in paths, or inject text into add-on UI dialogs.
 
@@ -193,7 +196,7 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 35-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
+- a fixed 36-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
 - atomic learned-route persistence, reload, write gating, add-on provenance, fixed-route reuse, and removal;
 - single-string learned search inference, closed search-key policy, encoded binding, and opaque bound-route reuse;
 - player actions, seek bounds, volume/mute, enumerated stream selection, repeat/shuffle, and opaque-handle playlist mutations with synthetic postcondition checks;
@@ -206,6 +209,6 @@ Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux an
 
 ## Project status and next action
 
-Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current Windows package exposes all 35 tools through MCP discovery. Live acceptance covers every discovery domain, opaque TV show → season → playable episode traversal, Kodi 21 plug-in-source listing, simple and three-level complex add-on navigation, Fen Light parameter inference/binding/browsing across a process restart, and restoring active playback to Kodi's full-screen video window. Favourite mutation, bulk watch state, the latest one-call helpers, the complete control matrix, the second learned-search add-on, refreshed Linux runtime discovery, systemd, and Docker remain to be verified.
+Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, recently watched shows, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current Windows package exposes all 36 tools through MCP discovery. Live acceptance covers every discovery domain including recent viewing history, opaque TV show → season → playable episode traversal, Kodi 21 plug-in-source listing, simple and three-level complex add-on navigation, Fen Light parameter inference/binding/browsing across a process restart, and restoring active playback to Kodi's full-screen video window. Favourite mutation, bulk watch state, the latest one-call helpers, the complete control matrix, the second learned-search add-on, refreshed Linux runtime discovery, systemd, and Docker remain to be verified.
 
 See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.

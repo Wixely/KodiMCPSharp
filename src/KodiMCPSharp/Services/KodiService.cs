@@ -14,10 +14,12 @@ public sealed partial class KodiService
     private const int MaximumBulkWatchStateChanges = 100;
     private const int MaximumEpisodesPerTvShow = 2000;
     private const int EpisodeReadPageSize = 200;
+    private const int MaximumRecentlyWatchedEpisodes = 500;
     private static readonly string[] ReadTools =
     [
         "kodi_list_instances", "kodi_get_capabilities", "kodi_get_status",
         "kodi_search_library", "kodi_list_genres", "kodi_list_recent", "kodi_list_continue_watching",
+        "kodi_list_recently_watched_shows",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
     ];
@@ -715,6 +717,47 @@ public sealed partial class KodiService
         int pageSize,
         CancellationToken cancellationToken) =>
         ListMediaViewAsync(alias, ContinueDescriptor.Resolve(domain), true, page, pageSize, cancellationToken);
+
+    public async Task<RecentlyWatchedShowResult> ListRecentlyWatchedShowsAsync(
+        string? alias,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (limit is < 1 or > 50) throw new McpException("Limit must be between 1 and 50.");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var result = await instance.Client.CallAsync("VideoLibrary.GetEpisodes", writer =>
+            {
+                WriteStringArray(writer, "properties", ["title", "showtitle", "season", "episode", "lastplayed"]);
+                WriteLimits(writer, 0, MaximumRecentlyWatchedEpisodes);
+                WriteSort(writer, "lastplayed", "descending");
+                WriteSearchFilter(writer, [new SearchFilterRule("lastplayed", "after", "1970-01-01")]);
+            }, cancellationToken);
+            var episodes = GetArray(result, "episodes");
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var shows = new List<RecentlyWatchedShowSummary>(limit);
+            foreach (var episode in episodes)
+            {
+                var show = _safeText.Clean(GetString(episode, "showtitle"));
+                if (string.IsNullOrWhiteSpace(show) || !seen.Add(show)) continue;
+                shows.Add(new RecentlyWatchedShowSummary(
+                    show,
+                    _safeText.Clean(ItemTitle(episode)),
+                    GetInt(episode, "season"),
+                    GetInt(episode, "episode"),
+                    _safeText.Clean(GetString(episode, "lastplayed"), 50)));
+                if (shows.Count == limit) break;
+            }
+            var limits = GetLimits(result, 0, episodes.Length);
+            return new RecentlyWatchedShowResult(
+                instance.Alias, limit, shows.Count, episodes.Length, limits.Total > episodes.Length, shows);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
 
     public async Task<PageSummary> BrowseTvShowAsync(
         string? alias,

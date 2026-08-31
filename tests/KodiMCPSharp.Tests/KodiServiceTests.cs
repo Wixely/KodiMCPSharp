@@ -524,6 +524,50 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task RecentlyWatchedShows_SortsByLastPlayedAndDeduplicatesShows()
+    {
+        string? filterField = null;
+        string? filterOperator = null;
+        string? sortMethod = null;
+        string? sortOrder = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetEpisodes" => CaptureParameters(write, root =>
+            {
+                filterField = root.GetProperty("filter").GetProperty("field").GetString();
+                filterOperator = root.GetProperty("filter").GetProperty("operator").GetString();
+                sortMethod = root.GetProperty("sort").GetProperty("method").GetString();
+                sortOrder = root.GetProperty("sort").GetProperty("order").GetString();
+            }, """
+                {"limits":{"start":0,"end":3,"total":8},"episodes":[
+                  {"label":"Newest","showtitle":"Example Show","season":2,"episode":3,"lastplayed":"2026-08-31 12:00:00"},
+                  {"label":"Older duplicate","showtitle":"Example Show","season":2,"episode":2,"lastplayed":"2026-08-30 12:00:00"},
+                  {"label":"Other","showtitle":"Other Show","season":1,"episode":4,"lastplayed":"2026-08-29 12:00:00"}
+                ]}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.ListRecentlyWatchedShowsAsync("room", 10, TestContext.Current.CancellationToken);
+
+        Assert.Equal("lastplayed", filterField);
+        Assert.Equal("after", filterOperator);
+        Assert.Equal("lastplayed", sortMethod);
+        Assert.Equal("descending", sortOrder);
+        Assert.Equal(2, result.Returned);
+        Assert.True(result.HasMoreHistory);
+        Assert.Collection(result.Shows,
+            show =>
+            {
+                Assert.Equal("Example Show", show.Show);
+                Assert.Equal("Newest", show.LastEpisode);
+                Assert.Equal(3, show.EpisodeNumber);
+            },
+            show => Assert.Equal("Other Show", show.Show));
+    }
+
+    [Fact]
     public async Task EpisodeResults_ReportExplicitWatchState()
     {
         var fake = new FakeKodiClient((method, _) => method switch

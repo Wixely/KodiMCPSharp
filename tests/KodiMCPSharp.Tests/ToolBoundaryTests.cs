@@ -20,7 +20,7 @@ public sealed class ToolBoundaryTests
         [
             "kodi_add_favourite", "kodi_bind_addon_route", "kodi_browse", "kodi_browse_tv_show", "kodi_bulk_set_episode_watch_state", "kodi_capture_current_addon_page", "kodi_forget_addon_route", "kodi_get_capabilities",
             "kodi_get_status", "kodi_list_addon_routes", "kodi_list_addons", "kodi_list_continue_watching",
-            "kodi_list_favourites", "kodi_list_genres", "kodi_list_instances", "kodi_list_recent",
+            "kodi_list_favourites", "kodi_list_genres", "kodi_list_instances", "kodi_list_recent", "kodi_list_recently_watched_shows",
             "kodi_play_episode", "kodi_play_item", "kodi_play_movie", "kodi_play_next_episode", "kodi_player_control",
             "kodi_playlist_add", "kodi_playlist_clear", "kodi_playlist_remove", "kodi_remove_favourite", "kodi_resume",
             "kodi_save_addon_route", "kodi_search_favourites", "kodi_search_library", "kodi_seek", "kodi_select_stream", "kodi_set_episode_watch_state", "kodi_set_playback_mode", "kodi_set_volume",
