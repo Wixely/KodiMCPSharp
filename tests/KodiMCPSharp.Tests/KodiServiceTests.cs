@@ -574,6 +574,28 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task RecentlyPlayedMusic_UsesKodiHistoryAndReturnsOpaqueSongHandle()
+    {
+        const string target = "synthetic-recent-song";
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "AudioLibrary.GetRecentlyPlayedSongs" => Element($$$"""
+                {"limits":{"start":0,"end":1,"total":1},"songs":[{"label":"Song","artist":["Artist"],"album":"Album","type":"song","file":"{{{target}}}"}]}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.ListRecentlyPlayedMusicAsync("room", "songs", 0, 25,
+            TestContext.Current.CancellationToken);
+
+        var song = Assert.Single(result.Items);
+        Assert.Equal("Artist", Assert.Single(song.Artists));
+        Assert.Contains("play", song.AvailableActions);
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ContinueWatching_UsesInProgressFilterAndReturnsResumeState()
     {
         string? field = null;
@@ -1317,6 +1339,38 @@ public sealed class KodiServiceTests
         Assert.Equal("random-filter-match", result.SelectionBasis);
         Assert.True(result.Observed);
         Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlayMusicAlbum_UsesExactFiltersAndOpensPrivateLibraryId()
+    {
+        int? openedAlbumId = null;
+        string[]? filterFields = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "AudioLibrary.GetAlbums" => CaptureParameters(write, root =>
+            {
+                filterFields = root.GetProperty("filter").GetProperty("and").EnumerateArray()
+                    .Select(filter => filter.GetProperty("field").GetString()!).ToArray();
+                Assert.True(root.GetProperty("includesingles").GetBoolean());
+            }, """{"limits":{"start":0,"end":1,"total":1},"albums":[{"albumid":42,"label":"Album","artist":["Artist"]}]}"""),
+            "Player.Open" => CaptureParameters(write,
+                root => openedAlbumId = root.GetProperty("item").GetProperty("albumid").GetInt32(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":0,\"type\":\"audio\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayMusicAsync("room", "albums", "Album", "Artist",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(filterFields);
+        Assert.Equal(["album", "artist"], filterFields);
+        Assert.Equal(42, openedAlbumId);
+        Assert.Equal("Artist", result.Artist);
+        Assert.True(result.Observed);
+        Assert.DoesNotContain("42", JsonSerializer.Serialize(result), StringComparison.Ordinal);
     }
 
     [Fact]

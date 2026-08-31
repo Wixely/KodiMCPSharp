@@ -123,6 +123,17 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.ListContinueWatchingAsync(alias, domain, page, pageSize, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_list_recently_played_music"),
+     Description("List bounded recently played songs or albums with safe music metadata and playable song handles where available.")]
+    public static async Task<string> ListRecentlyPlayedMusic(
+        KodiService service,
+        [Description("Closed music-history domain: songs or albums.")] string domain = "songs",
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListRecentlyPlayedMusicAsync(alias, domain, page, pageSize, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_list_recently_watched_shows"),
      Description("List unique TV shows by most recently played episode, including the last episode and Kodi last-played timestamp. This is viewing history, unlike recently-added or continue-watching views.")]
     public static async Task<string> ListRecentlyWatchedShows(
@@ -333,6 +344,17 @@ public static class KodiTools
         [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.PlayRandomAsync(alias, domain, watchedState, year, genre, minimumRating, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_play_music"),
+     Description("Resolve and play one exact library artist or album in a single call. An optional artist disambiguates albums. Requires the playback gate.")]
+    public static async Task<string> PlayMusic(
+        KodiService service,
+        [Description("Closed music domain: artists or albums.")] string domain,
+        [Description("Exact artist or album name, 1-200 printable characters.")] string name,
+        [Description("Optional exact album artist, 1-200 printable characters; valid only for albums.")] string? artist = null,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlayMusicAsync(alias, domain, name, artist, cancellationToken), JsonOptions);
 
     [McpServerTool(Name = "kodi_play_episode"),
      Description("Find and play one exact TV episode by show title, season, and episode in one MCP call. Searches safe favourites first, then the Kodi library, then bounded learned add-on routes. Requires the playback gate.")]

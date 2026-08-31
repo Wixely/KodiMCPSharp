@@ -4,7 +4,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 58080,
     [ValidateRange(1, 1000)]
-    [int]$ExpectedToolCount = 45,
+    [int]$ExpectedToolCount = 47,
     [switch]$ProbeAddons,
     [switch]$AllowLocalConfiguration,
     [ValidateRange(0, 3)]
@@ -28,7 +28,8 @@ param(
     [switch]$ForgetExistingRoute,
     [switch]$ProbeQueues,
     [switch]$ProbeUpNext,
-    [switch]$ProbeVideoMetadata
+    [switch]$ProbeVideoMetadata,
+    [switch]$ProbeMusicHistory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -117,6 +118,8 @@ try {
     if (-not ($tools | Where-Object name -eq 'kodi_browse_movie_set')) { throw 'Packaged server is missing kodi_browse_movie_set.' }
     if (-not ($tools | Where-Object name -eq 'kodi_list_video_tags')) { throw 'Packaged server is missing kodi_list_video_tags.' }
     if (-not ($tools | Where-Object name -eq 'kodi_get_video_details')) { throw 'Packaged server is missing kodi_get_video_details.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_list_recently_played_music')) { throw 'Packaged server is missing kodi_list_recently_played_music.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_play_music')) { throw 'Packaged server is missing kodi_play_music.' }
     $localConfigurationIncluded = Test-Path (Join-Path $publishDirectory 'KodiMCPSharp.Local.json')
     if ($localConfigurationIncluded -and -not $AllowLocalConfiguration) { throw 'Private local configuration was included in the package.' }
 
@@ -458,6 +461,13 @@ try {
             $videoDetails = Invoke-SmokeTool 124 'kodi_get_video_details' $detailArguments
             $summary.VideoDetailsObserved = ($videoDetails.domain -eq 'movies')
         }
+    }
+    if ($ProbeMusicHistory) {
+        if ($health.configuredInstances -lt 1) { throw 'Music history probing requires a configured instance.' }
+        $recentSongs = Invoke-SmokeTool 130 'kodi_list_recently_played_music' @{ domain = 'songs'; page = 0; pageSize = 10 }
+        $recentAlbums = Invoke-SmokeTool 131 'kodi_list_recently_played_music' @{ domain = 'albums'; page = 0; pageSize = 10 }
+        $summary.RecentSongTotal = $recentSongs.total
+        $summary.RecentAlbumTotal = $recentAlbums.total
     }
 
     [pscustomobject]$summary

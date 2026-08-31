@@ -204,6 +204,8 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - 2026-08-31: The refreshed 41-tool Windows package passed safe startup, schema discovery, forbidden-input inspection, and private-configuration exclusion. Its live read-only up-next probe returned the requested ten shows after bounded per-show inspection; no media names or targets were retained.
 - 2026-08-31: Added bounded read-only movie-set listing and opaque set traversal, video-tag discovery across closed domains, and exact rich movie/TV-show details with ambiguity refusal. Paths and database identifiers remain private. The Release suite passes 98 tests and the source catalogue contains 45 tools.
 - 2026-08-31: The 45-tool Windows package passed safe discovery and live Kodi 21 accepted video-tag listing, movie-set listing and opaque traversal, and exact rich movie details. Acceptance output retained only counts and booleans, not titles, identifiers, or targets.
+- 2026-08-31: Added bounded recently played song/album history and gated exact artist/album playback. Semantic playback resolves ambiguity before opening Kodi's supported private library identifier; IDs are never accepted or returned. The Release suite passes 100 tests and the source catalogue contains 47 tools.
+- 2026-08-31: The 47-tool Windows package passed safe discovery and live Kodi 21 accepted both recently played music domains. Acceptance retained only aggregate song/album counts. Semantic playback remains synthetic because live acceptance would start media.
 - Linux systemd and Docker runtime remain unverified.
 
 ## Next actions

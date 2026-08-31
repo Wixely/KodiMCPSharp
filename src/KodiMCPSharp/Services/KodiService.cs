@@ -33,6 +33,7 @@ public sealed partial class KodiService
         "kodi_search_library", "kodi_list_genres", "kodi_list_recent", "kodi_list_continue_watching",
         "kodi_list_recently_watched_movies", "kodi_list_recently_watched_shows",
         "kodi_list_up_next", "kodi_list_movie_sets", "kodi_browse_movie_set", "kodi_list_video_tags", "kodi_get_video_details",
+        "kodi_list_recently_played_music",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
         "kodi_get_queue",
@@ -93,7 +94,7 @@ public sealed partial class KodiService
             "kodi_playlist_remove", "kodi_playlist_clear", "kodi_move_queue_item", "kodi_show_fullscreen_video",
             "kodi_save_addon_route", "kodi_forget_addon_route", "kodi_set_episode_watch_state",
             "kodi_bulk_set_episode_watch_state", "kodi_play_movie", "kodi_play_episode", "kodi_play_next_episode",
-            "kodi_play_random", "kodi_resume",
+            "kodi_play_random", "kodi_play_music", "kodi_resume",
             "kodi_add_favourite", "kodi_remove_favourite",
         ],
         ControlGates: new Dictionary<string, bool>
@@ -143,13 +144,29 @@ public sealed partial class KodiService
         string target,
         bool resume,
         string requested,
+        CancellationToken cancellationToken) =>
+        await OpenItemAsync(instance, writer => writer.WriteString("file", target), resume, requested, cancellationToken);
+
+    private static async Task<PlaybackResult> OpenLibraryAudioAsync(
+        RegisteredKodiInstance instance,
+        string idProperty,
+        int libraryId,
+        string requested,
+        CancellationToken cancellationToken) =>
+        await OpenItemAsync(instance, writer => writer.WriteNumber(idProperty, libraryId), false, requested, cancellationToken);
+
+    private static async Task<PlaybackResult> OpenItemAsync(
+        RegisteredKodiInstance instance,
+        Action<Utf8JsonWriter> writeItem,
+        bool resume,
+        string requested,
         CancellationToken cancellationToken)
     {
         var response = await instance.Client.CallAsync("Player.Open", writer =>
         {
             writer.WritePropertyName("item");
             writer.WriteStartObject();
-            writer.WriteString("file", target);
+            writeItem(writer);
             writer.WriteEndObject();
             if (resume)
             {
@@ -980,6 +997,94 @@ public sealed partial class KodiService
         int pageSize,
         CancellationToken cancellationToken) =>
         ListMediaViewAsync(alias, ContinueDescriptor.Resolve(domain), true, page, pageSize, cancellationToken);
+
+    public Task<PageSummary> ListRecentlyPlayedMusicAsync(
+        string? alias,
+        string domain,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var descriptor = domain.Trim().ToLowerInvariant() switch
+        {
+            "songs" => new MediaViewDescriptor("AudioLibrary.GetRecentlyPlayedSongs", "songs", "music", false,
+                ["title", "artist", "album", "year", "genre", "duration", "track", "playcount", "lastplayed", "file"]),
+            "albums" => new MediaViewDescriptor("AudioLibrary.GetRecentlyPlayedAlbums", "albums", "music", false,
+                ["title", "artist", "year", "genre", "playcount", "lastplayed", "albumduration"]),
+            _ => throw new McpException("Recently played music domain must be songs or albums."),
+        };
+        return ListMediaViewAsync(alias, descriptor, false, page, pageSize, cancellationToken);
+    }
+
+    public async Task<MusicPlaybackResult> PlayMusicAsync(
+        string? alias,
+        string domain,
+        string name,
+        string? artist,
+        CancellationToken cancellationToken)
+    {
+        var normalizedDomain = domain.Trim().ToLowerInvariant();
+        if (normalizedDomain is not ("artists" or "albums"))
+            throw new McpException("Music playback domain must be artists or albums.");
+        var normalizedName = NormalizeSearchText(name, normalizedDomain == "artists" ? "Artist" : "Album", 200)
+            ?? throw new McpException("Artist or album name is required.");
+        var normalizedArtist = NormalizeSearchText(artist, "Album artist", 200);
+        if (normalizedDomain == "artists" && normalizedArtist is not null)
+            throw new McpException("The album artist qualifier is supported only for album playback.");
+        EnsureControl(_options.Controls.AllowPlayback, "music playback", "AllowPlayback");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var method = normalizedDomain == "artists" ? "AudioLibrary.GetArtists" : "AudioLibrary.GetAlbums";
+            var result = await instance.Client.CallAsync(method, writer =>
+            {
+                if (normalizedDomain == "albums")
+                {
+                    WriteStringArray(writer, "properties", ["title", "artist", "year"]);
+                    writer.WriteBoolean("includesingles", true);
+                }
+                var filters = new List<SearchFilterRule>
+                {
+                    new(normalizedDomain == "artists" ? "artist" : "album", "is", normalizedName),
+                };
+                if (normalizedArtist is not null) filters.Add(new("artist", "is", normalizedArtist));
+                WriteSearchFilter(writer, filters);
+                WriteLimits(writer, 0, 2);
+                WriteSort(writer, normalizedDomain == "artists" ? "artist" : "album");
+            }, cancellationToken);
+            var matches = GetArray(result, normalizedDomain);
+            if (matches.Length == 0) throw new McpException($"No {normalizedDomain} entry exactly matched '{normalizedName}'.");
+            if (matches.Length > 1)
+                throw new McpException(normalizedDomain == "albums"
+                    ? $"More than one album matched '{normalizedName}'; provide an artist."
+                    : $"More than one artist matched '{normalizedName}'.");
+            var selected = matches[0];
+            var idProperty = normalizedDomain == "artists" ? "artistid" : "albumid";
+            if (GetInt(selected, idProperty) is not { } libraryId)
+                throw new McpException("Kodi did not return a playable music-library identifier.");
+            var playback = await OpenLibraryAudioAsync(instance, idProperty, libraryId,
+                normalizedDomain == "artists" ? "play-artist" : "play-album", cancellationToken);
+            var selectedArtists = SafeStringArray(selected, "artist");
+            return new MusicPlaybackResult(
+                instance.Alias,
+                normalizedDomain,
+                normalizedName,
+                normalizedDomain == "artists"
+                    ? _safeText.Clean(GetString(selected, "artist") ?? GetString(selected, "label"))
+                    : selectedArtists.FirstOrDefault(),
+                normalizedDomain == "albums" ? _safeText.Clean(GetString(selected, "title") ?? GetString(selected, "label")) : null,
+                "exact-library-match",
+                playback.Accepted,
+                playback.Observed,
+                playback.Outcome,
+                playback.PlayerId,
+                playback.State);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
 
     public async Task<RecentlyWatchedShowResult> ListRecentlyWatchedShowsAsync(
         string? alias,

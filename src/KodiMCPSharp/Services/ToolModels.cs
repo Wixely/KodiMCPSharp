@@ -180,6 +180,19 @@ public sealed record VideoTitleDetails(
     string[] Tags,
     IReadOnlyList<CastMemberSummary> Cast);
 
+public sealed record MusicPlaybackResult(
+    string Alias,
+    string Domain,
+    string RequestedName,
+    string? Artist,
+    string? Album,
+    string SelectionBasis,
+    bool Accepted,
+    bool Observed,
+    string Completion,
+    int? PlayerId,
+    string? State);
+
 public sealed record PageSummary(
     string Alias,
     int Start,
