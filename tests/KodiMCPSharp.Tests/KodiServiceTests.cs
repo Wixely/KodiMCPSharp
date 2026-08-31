@@ -64,6 +64,55 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task CaptureCurrentAddonPage_UsesOnlyFixedInfoLabelAndReturnsOpaqueHandle()
+    {
+        const string target = "plugin://plugin.video.synthetic/?action=search&query=KodiMCPRouteTest";
+        string[]? requestedLabels = null;
+        string? requestedAddonId = null;
+        string? receivedDirectory = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "XBMC.GetInfoLabels" => CaptureParameters(write, root => requestedLabels = root.GetProperty("labels")
+                .EnumerateArray().Select(value => value.GetString()!).ToArray(), $$$"""
+                {"Container.FolderPath":"{{{target}}}"}
+                """),
+            "Addons.GetAddonDetails" => CaptureParameters(write,
+                root => requestedAddonId = root.GetProperty("addonid").GetString(),
+                "{\"addonid\":\"plugin.video.synthetic\",\"name\":\"Synthetic\",\"type\":\"xbmc.python.pluginsource\",\"enabled\":true}"),
+            "Files.GetDirectory" => CaptureDirectory(write, value => receivedDirectory = value),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var captured = await service.CaptureCurrentAddonPageAsync("room", TestContext.Current.CancellationToken);
+        await service.BrowseAsync("room", captured.Handle, "video", 0, 25, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(requestedLabels);
+        Assert.Equal(["Container.FolderPath"], requestedLabels);
+        Assert.Equal("plugin.video.synthetic", requestedAddonId);
+        Assert.Equal(target, receivedDirectory);
+        Assert.True(captured.CanBrowse);
+        Assert.DoesNotContain("plugin://", JsonSerializer.Serialize(captured), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("KodiMCPRouteTest", JsonSerializer.Serialize(captured), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CaptureCurrentAddonPage_RejectsNonPluginPage()
+    {
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "XBMC.GetInfoLabels" => Element("{\"Container.FolderPath\":\"videodb://movies/titles/\"}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() =>
+            service.CaptureCurrentAddonPageAsync("room", TestContext.Current.CancellationToken));
+
+        Assert.Contains("not a capturable add-on directory", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ListInstances_ClassifiesFailureWithoutEndpointDetails()
     {
         var fake = new FakeKodiClient((_, _) => throw new KodiRpcException(KodiFailureKind.Unavailable, "Kodi could not be reached."));

@@ -165,6 +165,14 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.ListAddonsAsync(alias, page, pageSize, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_capture_current_addon_page"),
+     Description("Capture Kodi's currently visible plug-in-source directory as an opaque browse handle. This bridges a user-completed keyboard/dialog workflow without exposing its internal plug-in URL or injecting input.")]
+    public static async Task<string> CaptureCurrentAddonPage(
+        KodiService service,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.CaptureCurrentAddonPageAsync(alias, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_browse"),
      Description("List Kodi sources for a closed media root, or browse a folder/add-on using a server-issued opaque handle. Caller-supplied paths are not accepted.")]
     public static async Task<string> Browse(

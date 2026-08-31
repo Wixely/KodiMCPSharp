@@ -27,6 +27,7 @@ Status: browsing, persistent fixed and single-input learned add-on routes, guard
 | `kodi_play_next_episode` | Resolve and play a show's next episode in one MCP call |
 | `kodi_resume` | Resume an in-progress library movie or episode by title in one MCP call |
 | `kodi_list_addons` | List enabled add-ons and issue handles for browsable roots |
+| `kodi_capture_current_addon_page` | Capture a user-opened add-on results page as an opaque browse handle |
 | `kodi_browse` | List a closed source root or traverse a server-issued folder handle |
 | `kodi_save_addon_route` | Persist a fixed route or infer one safe search input from a server-issued add-on handle; disabled by default |
 | `kodi_list_addon_routes` | List learned routes and issue fresh opaque handles after restart |
@@ -53,7 +54,7 @@ For a single-text search route, save a Kodi-observed browse handle whose target 
 
 Route writes are local service state and require `Kodi:LearnedRoutes:AllowWrite=true`; they do not require `Kodi:ReadOnly=false` and do not mutate Kodi. The default store is `kodimcpsharp_data/addon-routes` beside the executable and can be changed with `Kodi:LearnedRoutes:Directory`. Relative paths are resolved from the executable directory. Files are separated by Kodi alias and add-on identity, written atomically, and restricted to the service account on Unix-like systems. The complete directory is sensitive runtime state because add-on targets can contain account or query context; do not commit, log, or share it.
 
-The parameterized slice supports one string input inferred from a complete observed search value. Live acceptance confirms semantic navigation to movie and TV-show search entries in a complex add-on and to the search entry in a representative simple add-on. Completed-search template inference still requires a user-created synthetic search history entry. KodiMCPSharp does not synthesize unobserved routes, support multiple parameters, or automate Kodi keyboard/dialog input. Add-ons that never expose a completed search URL still require an add-on-specific adapter or user interaction.
+The parameterized slice supports one string input inferred from a complete observed search value. Live acceptance confirms semantic navigation to movie and TV-show search entries in a complex add-on and to the search entry in a representative simple add-on. After the user completes a keyboard/dialog search and leaves its results page visible, `kodi_capture_current_addon_page` reads only Kodi's fixed `Container.FolderPath` label, validates that it belongs to an enabled plug-in source, and returns an opaque browse handle suitable for `kodi_save_addon_route`. KodiMCPSharp does not return that path, synthesize unobserved routes, support multiple parameters, or automate Kodi keyboard/dialog input. Add-ons that do not expose a stable results directory still require an add-on-specific adapter.
 
 Generic add-on compatibility is intentionally directory-based. `kodi_list_addons` asks Kodi only for enabled `xbmc.python.pluginsource` add-ons, and `kodi_browse` can traverse any bounded menu that Kodi exposes through `Files.GetDirectory` using same-add-on opaque handles. A simple installed add-on root and three nested levels of a complex installed add-on have been accepted live. Navigation stops when an add-on requires a keyboard/dialog, returns no structured directory, crosses add-on provenance, or exposes an action that cannot be classified as browse or play. Those boundaries prevent generic support from becoming arbitrary plug-in execution or GUI input injection.
 
@@ -192,7 +193,7 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 34-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
+- a fixed 35-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
 - atomic learned-route persistence, reload, write gating, add-on provenance, fixed-route reuse, and removal;
 - single-string learned search inference, closed search-key policy, encoded binding, and opaque bound-route reuse;
 - player actions, seek bounds, volume/mute, enumerated stream selection, repeat/shuffle, and opaque-handle playlist mutations with synthetic postcondition checks;
@@ -205,6 +206,6 @@ Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux an
 
 ## Project status and next action
 
-Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the Linux package passes runtime health and exposes all 34 tools through MCP discovery. Live acceptance covers every discovery domain, opaque TV show → season → playable episode traversal, Kodi 21 plug-in-source listing, simple and three-level complex add-on navigation, and restoring active playback to Kodi's full-screen video window. Favourite mutation, bulk watch state, the latest one-call helpers, the complete control matrix, and learned parameterized searches remain to be verified live.
+Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current Windows package exposes all 35 tools through MCP discovery. Live acceptance covers every discovery domain, opaque TV show → season → playable episode traversal, Kodi 21 plug-in-source listing, simple and three-level complex add-on navigation, Fen Light parameter inference/binding/browsing across a process restart, and restoring active playback to Kodi's full-screen video window. Favourite mutation, bulk watch state, the latest one-call helpers, the complete control matrix, the second learned-search add-on, refreshed Linux runtime discovery, systemd, and Docker remain to be verified.
 
 See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.

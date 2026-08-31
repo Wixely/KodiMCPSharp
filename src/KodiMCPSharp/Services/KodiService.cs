@@ -19,7 +19,7 @@ public sealed partial class KodiService
         "kodi_list_instances", "kodi_get_capabilities", "kodi_get_status",
         "kodi_search_library", "kodi_list_genres", "kodi_list_recent", "kodi_list_continue_watching",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
-        "kodi_list_addon_routes", "kodi_bind_addon_route",
+        "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
     ];
 
     private readonly KodiInstanceRegistry _registry;
@@ -1259,6 +1259,44 @@ public sealed partial class KodiService
             }
             var limits = GetLimits(result, start, addons.Count);
             return new AddonPageSummary(instance.Alias, limits.Start, limits.End, limits.Total, addons);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<CapturedAddonPageSummary> CaptureCurrentAddonPageAsync(
+        string? alias,
+        CancellationToken cancellationToken)
+    {
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var labels = await instance.Client.CallAsync("XBMC.GetInfoLabels", writer =>
+            {
+                WriteStringArray(writer, "labels", ["Container.FolderPath"]);
+            }, cancellationToken);
+            var target = GetString(labels, "Container.FolderPath");
+            var addonId = target is null ? null : GetPluginAddonId(target);
+            if (string.IsNullOrWhiteSpace(target) || addonId is null)
+                throw new McpException("Kodi's current page is not a capturable add-on directory.");
+
+            var addon = await instance.Client.CallAsync("Addons.GetAddonDetails", writer =>
+            {
+                writer.WriteString("addonid", addonId);
+                WriteStringArray(writer, "properties", ["name", "enabled"]);
+            }, cancellationToken);
+            var details = addon.TryGetProperty("addon", out var value) ? value : addon;
+            if (details.ValueKind != JsonValueKind.Object ||
+                GetString(details, "type") != "xbmc.python.pluginsource" ||
+                GetBool(details, "enabled") == false)
+                throw new McpException("Kodi's current page does not belong to an enabled plug-in source add-on.");
+
+            var addonName = _safeText.Clean(GetString(details, "name") ?? GetString(details, "label"));
+            var handle = _handles.Create(instance.Alias, target, "files", "addon-folder", HandleAction.Browse,
+                addonId, addonName);
+            return new CapturedAddonPageSummary(instance.Alias, true, handle);
         }
         catch (KodiRpcException exception)
         {

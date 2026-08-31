@@ -1,6 +1,6 @@
 # KodiMCPSharp starting plan
 
-- Status: Browsing, persistent fixed and single-input learned add-on routes, independently gated media controls, watch-state updates, and idempotent favourite changes implemented; representative generic add-on navigation accepted live, learned-search acceptance pending
+- Status: Browsing, opaque current-page capture, persistent fixed and single-input learned add-on routes, independently gated media controls, watch-state updates, and idempotent favourite changes implemented; Fen Light learned-search acceptance passed live, second-add-on acceptance pending
 - Created: 2026-08-30
 - Owner: TBD
 - Target stack: C# and .NET 10
@@ -79,6 +79,7 @@ Use source-generated `System.Text.Json` contracts where practical for trimming a
 - `kodi_list_favourites` - safe favourite summaries and handles.
 - `kodi_browse` - browse a library/source/add-on folder represented by a server-issued handle.
 - `kodi_list_addons` - bounded installed/enabled add-on metadata with sensitive fields omitted.
+- `kodi_capture_current_addon_page` - capture a user-opened plug-in results directory behind an opaque handle without returning its target.
 - `kodi_get_capabilities` - effective protocol, feature, and write-control gates.
 - `kodi_list_addon_routes` - persistent learned-route summaries and fresh opaque handles.
 
@@ -193,6 +194,7 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - 2026-08-31: The repeatable Windows package smoke test passed safe startup, MCP 2025-06-18 negotiation, exact 34-tool discovery, forbidden-input inspection, and private local-configuration exclusion. Optional live add-on probing returns counts only.
 - 2026-08-31: Kodi 21 accepted `Addons.GetAddons` after restricting the request to enabled `xbmc.python.pluginsource` add-ons and omitting `type` from the optional property list. A simple installed add-on returned its structured root, and a complex installed add-on traversed three directory levels through same-add-on opaque handles. No add-on names, menu labels, targets, or media metadata were retained. The target became unavailable before semantic search-menu acceptance.
 - 2026-08-31: Live semantic navigation matched both complex add-on routes `Search → Movies` and `Search → TV Shows`, and matched the representative simple add-on's search entry, using only opaque handles. Parameter-template acceptance still requires the user to complete a known synthetic search in each add-on UI because Kodi keyboard/dialog input is deliberately outside the MCP boundary.
+- 2026-08-31: Added read-only `kodi_capture_current_addon_page` using only the fixed `Container.FolderPath` info label plus enabled plug-in-source validation. Fen Light live acceptance captured a user-completed synthetic movie-search page, inferred one input, saved it, rebound and browsed a second synthetic value, reloaded and reused the route across a real process restart, and removed all temporary routes. The Release suite passes 89 tests and the packaged catalogue contains 35 tools; no raw target, real search, media metadata, or temporary route remained.
 - Linux systemd and Docker runtime remain unverified.
 
 ## Next actions
@@ -219,10 +221,10 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - [x] Add play-from-handle and bounded player, seek, volume, stream, mode, and playlist controls behind independent gates with postcondition checks. - Owner: User / Agent; completed: 2026-08-30
 - [x] Add genre, recent, continue-watching, and TV hierarchy discovery without exposing Kodi IDs or paths. - Owner: Agent; completed: 2026-08-30
 - [x] Add persistent fixed learned add-on routes without accepting or returning raw plug-in targets. - Owner: Agent; completed: 2026-08-30
-- [ ] Validate single-input learned searches against Fen Light and another representative add-on; semantic search-menu navigation is accepted, while completed-search template inference and rebinding await user-created synthetic search history. Design multi-input templates only if a demonstrated workflow requires them. - Owner: Agent / User
+- [ ] Validate single-input learned searches against Fen Light and another representative add-on. Fen Light capture, inference, binding, browsing, restart persistence, and cleanup are accepted; the representative simple add-on still awaits a user-completed synthetic search page. Design multi-input templates only if a demonstrated workflow requires them. - Owner: Agent / User
 - [ ] Run a user-approved live acceptance pass for stop/start, seek, volume, stream, mode, and playlist controls without retaining private media data. - Owner: User / Agent
 - [ ] After technical acceptance, create `Wixely/KodiMCPSharp`, complete the public pre-push review, publish under MIT, and add MCPHub integration as a separately verified milestone. - Owner: User / Agent
 
 ## Recommended next action
 
-In the Kodi UI, complete a movie search using the exact synthetic text `KodiMCPRouteTest` in Fen Light and a search using the same text in the representative simple add-on, then tell the agent it is done. The agent can learn, bind, browse, and remove both temporary parameterized routes without retaining real search or media data. Owner: User; recommended review date: 2026-09-13.
+In the Kodi UI, complete a YouTube search using the exact synthetic text `KodiMCPRouteTest`, leave its results page visible, then tell the agent it is done. The agent can capture, learn, bind, browse, restart-test, and remove the second temporary parameterized route without retaining real search or media data. Owner: User; recommended review date: 2026-09-13.

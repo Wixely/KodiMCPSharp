@@ -159,6 +159,11 @@ public sealed record AddonPageSummary(
     int Total,
     IReadOnlyList<AddonSummary> Addons);
 
+public sealed record CapturedAddonPageSummary(
+    string Alias,
+    bool CanBrowse,
+    string Handle);
+
 public sealed record LearnedRouteSummary(
     string? AddonName,
     string Name,
