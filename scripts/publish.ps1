@@ -22,4 +22,9 @@ dotnet publish (Join-Path $repositoryRoot 'src\KodiMCPSharp\KodiMCPSharp.csproj'
     -p:DebugSymbols=true
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+$obsoleteIisAsset = Join-Path $OutputPath 'aspnetcorev2_inprocess.dll'
+if (Test-Path -LiteralPath $obsoleteIisAsset -PathType Leaf) {
+    Remove-Item -LiteralPath $obsoleteIisAsset -Force
+}
+
 Write-Host "Published KodiMCPSharp to $OutputPath"

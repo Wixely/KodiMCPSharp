@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>KodiMCPSharp</RootNamespace>
     <AssemblyName>KodiMCPSharp</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Wixely</Authors>
     <RepositoryUrl>https://github.com/Wixely/KodiMCPSharp</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -14,6 +14,7 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <InvariantGlobalization>true</InvariantGlobalization>
     <PublishSingleFile>true</PublishSingleFile>
+    <PublishIISAssets>false</PublishIISAssets>
     <SelfContained>false</SelfContained>
     <PublishAot>false</PublishAot>
     <DebugType>portable</DebugType>
@@ -39,4 +40,14 @@
       <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </None>
   </ItemGroup>
+  <Target Name="ExcludeUnusedIisNativeAsset"
+          AfterTargets="ComputeResolvedFilesToPublishList"
+          BeforeTargets="CopyFilesToPublishDirectory">
+    <ItemGroup>
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)"
+                             Condition="'%(Filename)%(Extension)' == 'aspnetcorev2_inprocess.dll'">
+        <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 </Project>
