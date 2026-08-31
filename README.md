@@ -36,6 +36,8 @@ Status: browsing, persistent fixed and single-input learned add-on routes, guard
 | `kodi_bind_addon_route` | Bind text to a safely inferred learned search route and issue an opaque handle |
 | `kodi_forget_addon_route` | Remove a learned route using its opaque handle; disabled by default |
 | `kodi_play_item` | Play one server-issued playable handle and verify observed player state; disabled by default |
+| `kodi_get_queue` | Inspect bounded audio or video queue items with stable positions |
+| `kodi_move_queue_item` | Move an item up to 100 positions and verify its destination |
 | `kodi_player_control` | Pause, resume, toggle, stop, next, or previous |
 | `kodi_seek` | Seek by percentage, bounded relative seconds, or Kodi step |
 | `kodi_set_volume` | Set volume and/or mute and verify the observed values |
@@ -197,7 +199,7 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 37-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
+- a fixed 39-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
 - atomic learned-route persistence, reload, write gating, add-on provenance, fixed-route reuse, and removal;
 - single-string learned search inference, closed search-key policy, encoded binding, and opaque bound-route reuse;
 - player actions, seek bounds, volume/mute, enumerated stream selection, repeat/shuffle, and opaque-handle playlist mutations with synthetic postcondition checks;
@@ -210,6 +212,6 @@ Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux an
 
 ## Project status and next action
 
-Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, recently watched shows and movies, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current Windows package exposes all 37 tools through MCP discovery. Live acceptance covers every discovery domain including show and movie viewing history, opaque TV show → season → playable episode traversal, Kodi 21 plug-in-source listing, simple and three-level complex add-on navigation, Fen Light parameter inference/binding/browsing across a process restart, and restoring active playback to Kodi's full-screen video window. Favourite mutation, bulk watch state, the latest one-call helpers, the complete control matrix, the second learned-search add-on, refreshed Linux runtime discovery, systemd, and Docker remain to be verified.
+Synthetic acceptance covers all media-control categories plus queue inspection/reordering, genre, recent, continue-watching, recently watched shows and movies, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current source catalogue contains 39 bounded tools. Live acceptance covers every discovery domain including show and movie viewing history, opaque TV show → season → playable episode traversal, Kodi 21 plug-in-source listing, simple and three-level complex add-on navigation, Fen Light parameter inference/binding/browsing across a process restart, and restoring active playback to Kodi's full-screen video window. Queue operations, favourite mutation, bulk watch state, the latest one-call helpers, the complete control matrix, the second learned-search add-on, refreshed package discovery, systemd, and Docker remain to be verified.
 
 See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.

@@ -1467,6 +1467,71 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task GetQueue_ReturnsPositionsAndOpaquePlayableItems()
+    {
+        const string firstTarget = "synthetic-queue-one";
+        const string secondTarget = "synthetic-queue-two";
+        int? requestedStart = null;
+        int? requestedEnd = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Playlist.GetPlaylists" => Element("[{\"playlistid\":1,\"type\":\"video\"}]"),
+            "Playlist.GetItems" => CaptureParameters(write, root =>
+            {
+                requestedStart = root.GetProperty("limits").GetProperty("start").GetInt32();
+                requestedEnd = root.GetProperty("limits").GetProperty("end").GetInt32();
+            }, $$$"""
+                {"limits":{"start":2,"end":4,"total":6},"items":[
+                  {"label":"One","type":"movie","file":"{{{firstTarget}}}"},
+                  {"label":"Two","type":"episode","file":"{{{secondTarget}}}","season":1,"episode":2}
+                ]}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.GetQueueAsync("room", "video", 1, 2, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, requestedStart);
+        Assert.Equal(4, requestedEnd);
+        Assert.Collection(result.Items,
+            item =>
+            {
+                Assert.Equal(2, item.Position);
+                Assert.StartsWith("h_", item.Item.Handle, StringComparison.Ordinal);
+            },
+            item => Assert.Equal(3, item.Position));
+        var serialized = JsonSerializer.Serialize(result);
+        Assert.DoesNotContain(firstTarget, serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain(secondTarget, serialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MoveQueueItem_UsesAdjacentSwapsAndVerifiesDestination()
+    {
+        var swaps = new List<(int First, int Second)>();
+        var itemReads = 0;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Playlist.GetPlaylists" => Element("[{\"playlistid\":1,\"type\":\"video\"}]"),
+            "Playlist.GetProperties" => Element("{\"size\":4}"),
+            "Playlist.GetItems" => CaptureParameters(write, _ => itemReads++,
+                "{\"limits\":{\"start\":0,\"end\":1,\"total\":4},\"items\":[{\"label\":\"Moved\",\"type\":\"movie\",\"file\":\"synthetic-moved\"}]}"),
+            "Playlist.Swap" => CaptureParameters(write, root => swaps.Add((
+                root.GetProperty("position1").GetInt32(), root.GetProperty("position2").GetInt32())), "\"OK\""),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlaylists = true);
+
+        var result = await service.MoveQueueItemAsync("room", "video", 1, 3, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, itemReads);
+        Assert.Equal([(1, 2), (2, 3)], swaps);
+        Assert.True(result.Accepted);
+        Assert.True(result.Observed);
+    }
+
+    [Fact]
     public async Task Status_ProvidesPlayerModesAndEnumeratedStreams()
     {
         var fake = new FakeKodiClient((method, _) => method switch

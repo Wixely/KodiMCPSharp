@@ -4,7 +4,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 58080,
     [ValidateRange(1, 1000)]
-    [int]$ExpectedToolCount = 37,
+    [int]$ExpectedToolCount = 39,
     [switch]$ProbeAddons,
     [switch]$AllowLocalConfiguration,
     [ValidateRange(0, 3)]
@@ -25,7 +25,8 @@ param(
     [string]$ExistingRouteName = '',
     [ValidateLength(0, 200)]
     [string]$ExistingRouteTestValue = '',
-    [switch]$ForgetExistingRoute
+    [switch]$ForgetExistingRoute,
+    [switch]$ProbeQueues
 )
 
 $ErrorActionPreference = 'Stop'
@@ -95,6 +96,8 @@ try {
     if (-not ($tools | Where-Object name -eq 'kodi_capture_current_addon_page')) { throw 'Packaged server is missing kodi_capture_current_addon_page.' }
     if (-not ($tools | Where-Object name -eq 'kodi_list_recently_watched_shows')) { throw 'Packaged server is missing kodi_list_recently_watched_shows.' }
     if (-not ($tools | Where-Object name -eq 'kodi_list_recently_watched_movies')) { throw 'Packaged server is missing kodi_list_recently_watched_movies.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_get_queue')) { throw 'Packaged server is missing kodi_get_queue.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_move_queue_item')) { throw 'Packaged server is missing kodi_move_queue_item.' }
     $localConfigurationIncluded = Test-Path (Join-Path $publishDirectory 'KodiMCPSharp.Local.json')
     if ($localConfigurationIncluded -and -not $AllowLocalConfiguration) { throw 'Private local configuration was included in the package.' }
 
@@ -377,6 +380,26 @@ try {
             if ($existingForgetPayload.error -or $existingForgetPayload.result.isError) { throw 'Persistent-route cleanup failed.' }
             $existingForgottenRoute = $existingForgetPayload.result.content[0].text | ConvertFrom-Json
             $summary.ExistingRouteRemoved = [bool]$existingForgottenRoute.removed
+        }
+    }
+    if ($ProbeQueues) {
+        if ($health.configuredInstances -lt 1) { throw 'Queue probing requires a configured instance.' }
+        foreach ($queueMedia in @('audio', 'video')) {
+            $queueCall = @{
+                jsonrpc = '2.0'
+                id = if ($queueMedia -eq 'audio') { 100 } else { 101 }
+                method = 'tools/call'
+                params = @{ name = 'kodi_get_queue'; arguments = @{ media = $queueMedia; page = 0; pageSize = 10 } }
+            } | ConvertTo-Json -Depth 6 -Compress
+            $queueResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/mcp" `
+                -Method Post -ContentType 'application/json' -Headers $headers -Body $queueCall -TimeoutSec 20
+            $queueDataLine = $queueResponse.Content -split "`n" | Where-Object { $_ -like 'data:*' } | Select-Object -Last 1
+            $queueJson = if ($queueDataLine) { $queueDataLine.Substring(5).Trim() } else { $queueResponse.Content }
+            $queuePayload = $queueJson | ConvertFrom-Json
+            if ($queuePayload.error -or $queuePayload.result.isError) { throw "$queueMedia queue inspection failed." }
+            $queuePage = $queuePayload.result.content[0].text | ConvertFrom-Json
+            $summary["$($queueMedia)QueueTotal"] = $queuePage.total
+            $summary["$($queueMedia)QueueReturned"] = @($queuePage.items).Count
         }
     }
 

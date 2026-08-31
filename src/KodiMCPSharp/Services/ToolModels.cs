@@ -143,6 +143,16 @@ public sealed record PageSummary(
     int Total,
     IReadOnlyList<MediaItemSummary> Items);
 
+public sealed record QueueItemSummary(int Position, MediaItemSummary Item);
+
+public sealed record QueuePageSummary(
+    string Alias,
+    string Media,
+    int Start,
+    int End,
+    int Total,
+    IReadOnlyList<QueueItemSummary> Items);
+
 public sealed record RecentlyWatchedShowSummary(
     string Show,
     string? LastEpisode,

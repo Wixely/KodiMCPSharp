@@ -353,6 +353,28 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.PlaylistAddAsync(alias, handle, media, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_get_queue"),
+     Description("Inspect a bounded page of Kodi's audio or video queue with stable zero-based positions and opaque playable handles.")]
+    public static async Task<string> GetQueue(
+        KodiService service,
+        [Description("Closed queue media: audio or video.")] string media = "video",
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.GetQueueAsync(alias, media, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_move_queue_item"),
+     Description("Move one queue item to another position using bounded adjacent swaps and verify the result. Requires the playlists gate.")]
+    public static async Task<string> MoveQueueItem(
+        KodiService service,
+        [Description("Closed queue media: audio or video.")] string media,
+        [Description("Current zero-based queue position.")] int fromPosition,
+        [Description("Destination zero-based queue position, at most 100 positions away.")] int toPosition,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.MoveQueueItemAsync(alias, media, fromPosition, toPosition, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_playlist_remove"),
      Description("Remove one zero-based position from Kodi's audio or video playlist. Requires the playlists gate.")]
     public static async Task<string> PlaylistRemove(

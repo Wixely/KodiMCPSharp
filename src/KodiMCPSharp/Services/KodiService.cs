@@ -22,6 +22,7 @@ public sealed partial class KodiService
         "kodi_list_recently_watched_movies", "kodi_list_recently_watched_shows",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
+        "kodi_get_queue",
     ];
 
     private readonly KodiInstanceRegistry _registry;
@@ -76,7 +77,7 @@ public sealed partial class KodiService
         [
             "kodi_play_item", "kodi_player_control", "kodi_seek", "kodi_set_volume",
             "kodi_select_stream", "kodi_set_playback_mode", "kodi_playlist_add",
-            "kodi_playlist_remove", "kodi_playlist_clear", "kodi_show_fullscreen_video",
+            "kodi_playlist_remove", "kodi_playlist_clear", "kodi_move_queue_item", "kodi_show_fullscreen_video",
             "kodi_save_addon_route", "kodi_forget_addon_route", "kodi_set_episode_watch_state",
             "kodi_bulk_set_episode_watch_state", "kodi_play_movie", "kodi_play_episode", "kodi_play_next_episode",
             "kodi_resume",
@@ -557,6 +558,88 @@ public sealed partial class KodiService
 
     public Task<MediaControlResult> PlaylistClearAsync(string? alias, string media, CancellationToken cancellationToken) =>
         MutatePlaylistAsync(alias, media, "clear", null, cancellationToken);
+
+    public async Task<QueuePageSummary> GetQueueAsync(
+        string? alias,
+        string media,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var instance = _registry.Resolve(alias);
+        var normalizedMedia = NormalizePlaylistMedia(media);
+        var (start, end) = Bounds(page, pageSize);
+        try
+        {
+            var playlistId = await ResolvePlaylistIdAsync(instance, normalizedMedia, cancellationToken);
+            var result = await instance.Client.CallAsync("Playlist.GetItems", writer =>
+            {
+                writer.WriteNumber("playlistid", playlistId);
+                WriteStringArray(writer, "properties",
+                    ["title", "showtitle", "season", "episode", "artist", "album", "duration", "file"]);
+                WriteLimits(writer, start, end);
+            }, cancellationToken);
+            var pageResult = ParseItemPage(instance.Alias, result, "items", normalizedMedia, start);
+            return new QueuePageSummary(
+                instance.Alias,
+                normalizedMedia,
+                pageResult.Start,
+                pageResult.End,
+                pageResult.Total,
+                pageResult.Items.Select((item, index) => new QueueItemSummary(pageResult.Start + index, item)).ToArray());
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<MediaControlResult> MoveQueueItemAsync(
+        string? alias,
+        string media,
+        int fromPosition,
+        int toPosition,
+        CancellationToken cancellationToken)
+    {
+        EnsureControl(_options.Controls.AllowPlaylists, "queue reordering", "AllowPlaylists");
+        if (fromPosition < 0 || toPosition < 0) throw new McpException("Queue positions must be zero or greater.");
+        if (Math.Abs((long)toPosition - fromPosition) > 100)
+            throw new McpException("A queue item may move at most 100 positions in one call.");
+        var instance = _registry.Resolve(alias);
+        var normalizedMedia = NormalizePlaylistMedia(media);
+        try
+        {
+            var playlistId = await ResolvePlaylistIdAsync(instance, normalizedMedia, cancellationToken);
+            var size = await GetPlaylistSizeAsync(instance, playlistId, cancellationToken);
+            if (fromPosition >= size || toPosition >= size)
+                throw new McpException($"Queue positions must be less than the current size ({size}).");
+            if (fromPosition == toPosition)
+                return ControlResult(instance.Alias, "move-queue-item", true, true, null, null,
+                    new Dictionary<string, object?> { ["media"] = normalizedMedia, ["fromPosition"] = fromPosition, ["toPosition"] = toPosition, ["size"] = size });
+
+            var signature = await GetPlaylistItemSignatureAsync(instance, playlistId, fromPosition, cancellationToken);
+            var step = toPosition > fromPosition ? 1 : -1;
+            var accepted = true;
+            for (var position = fromPosition; position != toPosition; position += step)
+            {
+                var response = await instance.Client.CallAsync("Playlist.Swap", writer =>
+                {
+                    writer.WriteNumber("playlistid", playlistId);
+                    writer.WriteNumber("position1", position);
+                    writer.WriteNumber("position2", position + step);
+                }, cancellationToken);
+                accepted &= IsAccepted(response);
+            }
+            var observedSignature = await GetPlaylistItemSignatureAsync(instance, playlistId, toPosition, cancellationToken);
+            return ControlResult(instance.Alias, "move-queue-item", accepted,
+                signature is not null && signature == observedSignature, null, null,
+                new Dictionary<string, object?> { ["media"] = normalizedMedia, ["fromPosition"] = fromPosition, ["toPosition"] = toPosition, ["size"] = size });
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
 
     public async Task<MediaControlResult> ShowFullscreenVideoAsync(string? alias, CancellationToken cancellationToken)
     {
@@ -2280,6 +2363,29 @@ public sealed partial class KodiService
             WriteStringArray(writer, "properties", ["size"]);
         }, cancellationToken);
         return GetInt(properties, "size") ?? 0;
+    }
+
+    private static async Task<string?> GetPlaylistItemSignatureAsync(
+        RegisteredKodiInstance instance,
+        int playlistId,
+        int position,
+        CancellationToken cancellationToken)
+    {
+        var result = await instance.Client.CallAsync("Playlist.GetItems", writer =>
+        {
+            writer.WriteNumber("playlistid", playlistId);
+            WriteStringArray(writer, "properties", ["title", "showtitle", "season", "episode", "artist", "album", "duration", "file"]);
+            WriteLimits(writer, position, position + 1);
+        }, cancellationToken);
+        var item = GetArray(result, "items").FirstOrDefault();
+        if (item.ValueKind != JsonValueKind.Object) return null;
+        return string.Join('\u001f',
+            GetString(item, "file") ?? string.Empty,
+            ItemTitle(item),
+            GetString(item, "type") ?? string.Empty,
+            GetInt(item, "season")?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            GetInt(item, "episode")?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            GetInt(item, "duration")?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
     }
 
     private void EnsureControl(bool enabled, string operation, string gate)
