@@ -58,6 +58,37 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.ListGenresAsync(alias, domain, page, pageSize, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_list_pvr_channels"),
+     Description("List bounded TV or radio channels from the first Kodi PVR channel group with opaque playback handles. Requires the optional PVR feature.")]
+    public static async Task<string> ListPvrChannels(
+        KodiService service,
+        [Description("Closed PVR channel type: tv or radio.")] string channelType = "tv",
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListPvrChannelsAsync(alias, channelType, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_list_pvr_recordings"),
+     Description("List bounded PVR recordings with safe watch/resume metadata and opaque playback handles. Requires the optional PVR feature.")]
+    public static async Task<string> ListPvrRecordings(
+        KodiService service,
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListPvrRecordingsAsync(alias, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_list_pvr_timers"),
+     Description("List bounded PVR timer and reminder summaries. Requires the optional PVR feature.")]
+    public static async Task<string> ListPvrTimers(
+        KodiService service,
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListPvrTimersAsync(alias, page, pageSize, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_list_video_tags"),
      Description("List bounded video-library tag names for movies, TV shows, or music videos.")]
     public static async Task<string> ListVideoTags(
@@ -375,6 +406,16 @@ public static class KodiTools
         [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.PlayMusicAsync(alias, domain, name, artist, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_play_pvr"),
+     Description("Play an opaque PVR channel or recording handle. Recording resume is optional; live channels cannot resume. Requires both the PVR feature and its playback gate.")]
+    public static async Task<string> PlayPvr(
+        KodiService service,
+        [Description("Opaque channel or recording handle returned by a PVR discovery tool.")] string handle,
+        [Description("Resume a recording from Kodi's saved position. Invalid for live channels.")] bool resume = false,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlayPvrAsync(alias, handle, resume, cancellationToken), JsonOptions);
 
     [McpServerTool(Name = "kodi_play_episode"),
      Description("Find and play one exact TV episode by show title, season, and episode in one MCP call. Searches safe favourites first, then the Kodi library, then bounded learned add-on routes. Requires the playback gate.")]

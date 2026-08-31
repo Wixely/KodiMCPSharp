@@ -34,6 +34,7 @@ public sealed partial class KodiService
         "kodi_list_recently_watched_movies", "kodi_list_recently_watched_shows",
         "kodi_list_up_next", "kodi_list_movie_sets", "kodi_browse_movie_set", "kodi_list_video_tags", "kodi_get_video_details",
         "kodi_list_recently_played_music",
+        "kodi_list_pvr_channels", "kodi_list_pvr_recordings", "kodi_list_pvr_timers",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
         "kodi_check_addon_routes",
@@ -98,6 +99,7 @@ public sealed partial class KodiService
             "kodi_play_random", "kodi_play_music", "kodi_resume",
             "kodi_add_favourite", "kodi_remove_favourite",
             "kodi_library_maintenance",
+            "kodi_play_pvr",
         ],
         ControlGates: new Dictionary<string, bool>
         {
@@ -113,13 +115,16 @@ public sealed partial class KodiService
             ["favourites"] = !_options.ReadOnly && _options.Controls.AllowFavourites,
             ["libraryScan"] = !_options.ReadOnly && _options.Controls.AllowLibraryScan,
             ["libraryClean"] = !_options.ReadOnly && _options.Controls.AllowLibraryClean,
+            ["pvrPlayback"] = !_options.ReadOnly && _options.Pvr.Enabled && _options.Controls.AllowPvrPlayback,
             ["learnedRouteWrites"] = _options.LearnedRoutes.AllowWrite,
             ["navigation"] = false,
             ["addonActivation"] = false,
             ["administration"] = !_options.ReadOnly && (_options.Controls.AllowLibraryScan || _options.Controls.AllowLibraryClean),
         },
         Handles: new HandlePolicySummary(_options.Handles.LifetimeMinutes, _options.Handles.Capacity, false),
-        LearnedRoutes: new LearnedRoutePolicySummary(true, _options.LearnedRoutes.AllowWrite, _options.LearnedRoutes.MaximumRoutesPerAddon));
+        LearnedRoutes: new LearnedRoutePolicySummary(true, _options.LearnedRoutes.AllowWrite, _options.LearnedRoutes.MaximumRoutesPerAddon),
+        Pvr: new PvrPolicySummary(_options.Pvr.Enabled,
+            !_options.ReadOnly && _options.Pvr.Enabled && _options.Controls.AllowPvrPlayback));
 
     public async Task<PlaybackResult> PlayItemAsync(string? alias, string handle, CancellationToken cancellationToken)
     {
@@ -151,7 +156,7 @@ public sealed partial class KodiService
         CancellationToken cancellationToken) =>
         await OpenItemAsync(instance, writer => writer.WriteString("file", target), resume, requested, cancellationToken);
 
-    private static async Task<PlaybackResult> OpenLibraryAudioAsync(
+    private static async Task<PlaybackResult> OpenLibraryItemAsync(
         RegisteredKodiInstance instance,
         string idProperty,
         int libraryId,
@@ -1066,7 +1071,7 @@ public sealed partial class KodiService
             var idProperty = normalizedDomain == "artists" ? "artistid" : "albumid";
             if (GetInt(selected, idProperty) is not { } libraryId)
                 throw new McpException("Kodi did not return a playable music-library identifier.");
-            var playback = await OpenLibraryAudioAsync(instance, idProperty, libraryId,
+            var playback = await OpenLibraryItemAsync(instance, idProperty, libraryId,
                 normalizedDomain == "artists" ? "play-artist" : "play-album", cancellationToken);
             var selectedArtists = SafeStringArray(selected, "artist");
             return new MusicPlaybackResult(
@@ -1120,6 +1125,175 @@ public sealed partial class KodiService
             var accepted = IsAccepted(response);
             return new LibraryMaintenanceResult(instance.Alias, normalizedDomain, normalizedAction, showDialogs,
                 accepted, accepted ? "accepted-started" : "indeterminate");
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<PvrChannelPageSummary> ListPvrChannelsAsync(
+        string? alias,
+        string channelType,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        EnsurePvrEnabled();
+        var normalizedType = channelType.Trim().ToLowerInvariant();
+        if (normalizedType is not ("tv" or "radio")) throw new McpException("PVR channel type must be tv or radio.");
+        var instance = _registry.Resolve(alias);
+        var (start, end) = Bounds(page, pageSize);
+        try
+        {
+            var groupsResult = await instance.Client.CallAsync("PVR.GetChannelGroups", writer =>
+            {
+                writer.WriteString("channeltype", normalizedType);
+                WriteLimits(writer, 0, 1);
+            }, cancellationToken);
+            var group = GetArray(groupsResult, "channelgroups").FirstOrDefault();
+            if (group.ValueKind != JsonValueKind.Object || GetInt(group, "channelgroupid") is not { } groupId)
+                return new PvrChannelPageSummary(instance.Alias, normalizedType, null, start, start, 0, []);
+            var channelsResult = await instance.Client.CallAsync("PVR.GetChannels", writer =>
+            {
+                writer.WriteNumber("channelgroupid", groupId);
+                WriteStringArray(writer, "properties",
+                    ["channeltype", "channel", "broadcastnow", "broadcastnext", "icon", "channelnumber", "subchannelnumber", "isrecording"]);
+                WriteLimits(writer, start, end);
+            }, cancellationToken);
+            var channels = GetArray(channelsResult, "channels")
+                .Where(item => GetInt(item, "channelid") is > 0)
+                .Select(item => new PvrChannelSummary(
+                    _safeText.Clean(GetString(item, "channel") ?? GetString(item, "label")),
+                    _safeText.Clean(GetString(item, "channeltype"), 20) ?? normalizedType,
+                    GetInt(item, "channelnumber"),
+                    GetInt(item, "subchannelnumber"),
+                    _safeText.Clean(GetNestedString(item, "broadcastnow", "title") ?? GetNestedString(item, "broadcastnow", "label")),
+                    _safeText.Clean(GetNestedString(item, "broadcastnext", "title") ?? GetNestedString(item, "broadcastnext", "label")),
+                    GetBool(item, "isrecording") ?? false,
+                    !string.IsNullOrWhiteSpace(GetString(item, "icon")),
+                    _handles.Create(instance.Alias,
+                        GetInt(item, "channelid")!.Value.ToString(CultureInfo.InvariantCulture),
+                        "pvr", "pvr-channel", HandleAction.PvrPlay)))
+                .ToArray();
+            var limits = GetLimits(channelsResult, start, channels.Length);
+            return new PvrChannelPageSummary(instance.Alias, normalizedType,
+                _safeText.Clean(GetString(group, "label") ?? GetString(group, "title")),
+                limits.Start, limits.End, limits.Total, channels);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<PvrRecordingPageSummary> ListPvrRecordingsAsync(
+        string? alias,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        EnsurePvrEnabled();
+        var instance = _registry.Resolve(alias);
+        var (start, end) = Bounds(page, pageSize);
+        try
+        {
+            var result = await instance.Client.CallAsync("PVR.GetRecordings", writer =>
+            {
+                WriteStringArray(writer, "properties", ["title", "channel", "starttime", "endtime", "runtime", "playcount", "resume"]);
+                WriteLimits(writer, start, end);
+            }, cancellationToken);
+            var recordings = GetArray(result, "recordings")
+                .Where(item => GetInt(item, "recordingid") is > 0)
+                .Select(item =>
+                {
+                    var resumePosition = item.TryGetProperty("resume", out var resume) && resume.ValueKind == JsonValueKind.Object
+                        ? GetDouble(resume, "position") ?? 0
+                        : 0;
+                    var playCount = GetInt(item, "playcount") ?? 0;
+                    return new PvrRecordingSummary(
+                        _safeText.Clean(GetString(item, "title") ?? GetString(item, "label")),
+                        _safeText.Clean(GetString(item, "channel")),
+                        _safeText.Clean(GetString(item, "starttime"), 50),
+                        _safeText.Clean(GetString(item, "endtime"), 50),
+                        GetInt(item, "runtime"),
+                        playCount > 0 ? "watched" : resumePosition > 0 ? "partially-watched" : "unwatched",
+                        resumePosition,
+                        _handles.Create(instance.Alias,
+                            GetInt(item, "recordingid")!.Value.ToString(CultureInfo.InvariantCulture),
+                            "pvr", "pvr-recording", HandleAction.PvrPlay));
+                })
+                .ToArray();
+            var limits = GetLimits(result, start, recordings.Length);
+            return new PvrRecordingPageSummary(instance.Alias, limits.Start, limits.End, limits.Total, recordings);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<PvrTimerPageSummary> ListPvrTimersAsync(
+        string? alias,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        EnsurePvrEnabled();
+        var instance = _registry.Resolve(alias);
+        var (start, end) = Bounds(page, pageSize);
+        try
+        {
+            var result = await instance.Client.CallAsync("PVR.GetTimers", writer =>
+            {
+                WriteStringArray(writer, "properties",
+                    ["title", "summary", "starttime", "endtime", "state", "isradio", "istimerrule", "isreadonly", "isreminder"]);
+                WriteLimits(writer, start, end);
+            }, cancellationToken);
+            var timers = GetArray(result, "timers")
+                .Select(item => new PvrTimerSummary(
+                    _safeText.Clean(GetString(item, "title") ?? GetString(item, "label")),
+                    _safeText.Clean(GetString(item, "summary"), 1000),
+                    _safeText.Clean(GetString(item, "starttime"), 50),
+                    _safeText.Clean(GetString(item, "endtime"), 50),
+                    _safeText.Clean(GetString(item, "state"), 30),
+                    GetBool(item, "isradio") ?? false,
+                    GetBool(item, "istimerrule") ?? false,
+                    GetBool(item, "isreadonly") ?? false,
+                    GetBool(item, "isreminder") ?? false))
+                .ToArray();
+            var limits = GetLimits(result, start, timers.Length);
+            return new PvrTimerPageSummary(instance.Alias, limits.Start, limits.End, limits.Total, timers);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<PlaybackResult> PlayPvrAsync(
+        string? alias,
+        string handle,
+        bool resume,
+        CancellationToken cancellationToken)
+    {
+        EnsurePvrEnabled();
+        EnsureControl(_options.Controls.AllowPvrPlayback, "PVR playback", "AllowPvrPlayback");
+        var instance = _registry.Resolve(alias);
+        var entry = _handles.Resolve(handle, instance.Alias, HandleAction.PvrPlay);
+        var idProperty = entry.Kind switch
+        {
+            "pvr-channel" when !resume => "channelid",
+            "pvr-recording" => "recordingid",
+            "pvr-channel" => throw new McpException("Live channels cannot be resumed."),
+            _ => throw new McpException("The handle is not a PVR channel or recording handle."),
+        };
+        if (!int.TryParse(entry.Target, NumberStyles.None, CultureInfo.InvariantCulture, out var libraryId) || libraryId < 1)
+            throw new McpException("The PVR handle is invalid.");
+        try
+        {
+            return await OpenItemAsync(instance, writer => writer.WriteNumber(idProperty, libraryId), resume,
+                entry.Kind == "pvr-channel" ? "play-pvr-channel" : "play-pvr-recording", cancellationToken);
         }
         catch (KodiRpcException exception)
         {
@@ -2936,6 +3110,12 @@ public sealed partial class KodiService
         if (!enabled) throw new McpException($"{operation} is disabled. Set Kodi:Controls:{gate}=true to enable it.");
     }
 
+    private void EnsurePvrEnabled()
+    {
+        if (!_options.Pvr.Enabled)
+            throw new McpException("PVR tools are disabled. Set Kodi:Pvr:Enabled=true to enable them.");
+    }
+
     private void EnsureLearnedRouteWrites()
     {
         if (!_options.LearnedRoutes.AllowWrite)
@@ -3469,6 +3649,8 @@ public sealed partial class KodiService
         value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var result) && result.TryGetInt32(out var number) ? number : null;
     private static int? GetNestedInt(JsonElement value, string property, string nestedProperty) =>
         value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var nested) ? GetInt(nested, nestedProperty) : null;
+    private static string? GetNestedString(JsonElement value, string property, string nestedProperty) =>
+        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var nested) ? GetString(nested, nestedProperty) : null;
     private static double? GetDouble(JsonElement value, string property) =>
         value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var result) && result.TryGetDouble(out var number) ? number : null;
     private static bool? GetBool(JsonElement value, string property) =>

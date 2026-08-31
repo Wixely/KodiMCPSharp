@@ -20,7 +20,8 @@
       "AllowWatchState": false,
       "AllowFavourites": false,
       "AllowLibraryScan": false,
-      "AllowLibraryClean": false
+      "AllowLibraryClean": false,
+      "AllowPvrPlayback": false
     },
     "RequestTimeoutSeconds": 10,
     "MaximumResponseBytes": 2097152,
@@ -33,6 +34,9 @@
       "Directory": "kodimcpsharp_data/addon-routes",
       "AllowWrite": false,
       "MaximumRoutesPerAddon": 100
+    },
+    "Pvr": {
+      "Enabled": false
     },
     "Instances": []
   },

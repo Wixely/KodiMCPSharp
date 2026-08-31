@@ -1409,6 +1409,70 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task PvrChannels_ReturnOpaqueHandleAndPlayPrivateChannelId()
+    {
+        int? openedChannelId = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "PVR.GetChannelGroups" => Element("""
+                {"limits":{"start":0,"end":1,"total":1},"channelgroups":[{"channelgroupid":7,"label":"All TV"}]}
+                """),
+            "PVR.GetChannels" => CaptureParameters(write, root => Assert.Equal(7, root.GetProperty("channelgroupid").GetInt32()), """
+                {"limits":{"start":0,"end":1,"total":1},"channels":[{"channelid":42,"label":"Channel","channeltype":"tv","channelnumber":1,"broadcastnow":{"title":"Now"}}]}
+                """),
+            "Player.Open" => CaptureParameters(write,
+                root => openedChannelId = root.GetProperty("item").GetProperty("channelid").GetInt32(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreatePvrService(fake, allowPlayback: true);
+
+        var channels = await service.ListPvrChannelsAsync("room", "tv", 0, 25, TestContext.Current.CancellationToken);
+        var playback = await service.PlayPvrAsync("room", Assert.Single(channels.Channels).Handle, false,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(42, openedChannelId);
+        Assert.True(playback.Observed);
+        Assert.DoesNotContain("42", JsonSerializer.Serialize(channels), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PvrRecordingsAndTimers_ReturnSafeBoundedSummaries()
+    {
+        const int recordingId = 73;
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "PVR.GetRecordings" => Element($$$"""
+                {"limits":{"start":0,"end":1,"total":1},"recordings":[{"recordingid":{{{recordingId}}},"title":"Recording","channel":"Channel","starttime":"2026-08-31 10:00:00","runtime":3600,"resume":{"position":120}}]}
+                """),
+            "PVR.GetTimers" => Element("""
+                {"limits":{"start":0,"end":1,"total":1},"timers":[{"timerid":9,"title":"Timer","summary":"Summary","state":"scheduled","isradio":false,"istimerrule":true}]}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreatePvrService(fake);
+
+        var recordings = await service.ListPvrRecordingsAsync("room", 0, 25, TestContext.Current.CancellationToken);
+        var timers = await service.ListPvrTimersAsync("room", 0, 25, TestContext.Current.CancellationToken);
+
+        Assert.Equal("partially-watched", Assert.Single(recordings.Recordings).WatchState);
+        Assert.Equal("scheduled", Assert.Single(timers.Timers).State);
+        Assert.DoesNotContain(recordingId.ToString(System.Globalization.CultureInfo.InvariantCulture), JsonSerializer.Serialize(recordings), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PvrDiscovery_IsDisabledByDefault()
+    {
+        var service = CreateService(new FakeKodiClient((_, _) => throw new InvalidOperationException()));
+
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() =>
+            service.ListPvrTimersAsync("room", 0, 25, TestContext.Current.CancellationToken));
+
+        Assert.Contains("Kodi:Pvr:Enabled", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PlayMovie_WithYearUsesUniqueLibraryMatch()
     {
         const string target = "synthetic-library-movie";
@@ -1988,6 +2052,21 @@ public sealed class KodiServiceTests
 
     private static KodiService CreateControlService(IKodiRpcClient client, Action<KodiControlOptions> configure) =>
         CreateControlServiceWithHandles(client, configure).Service;
+
+    private static KodiService CreatePvrService(IKodiRpcClient client, bool allowPlayback = false)
+    {
+        var options = new KodiOptions
+        {
+            DefaultAlias = "room",
+            ReadOnly = !allowPlayback,
+            Pvr = new PvrOptions { Enabled = true },
+            Controls = new KodiControlOptions { AllowPvrPlayback = allowPlayback },
+            Handles = new HandleOptions { LifetimeMinutes = 15, Capacity = 100 },
+        };
+        var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", client)], "room");
+        var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
+        return new KodiService(registry, handles, new TestLearnedRouteStore(), Options.Create(options), new SafeText(), TimeProvider.System);
+    }
 
     private static (KodiService Service, InMemoryHandleStore Handles) CreateControlServiceWithHandles(
         IKodiRpcClient client,

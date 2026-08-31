@@ -10,11 +10,14 @@ public sealed record CapabilitySummary(
     string[] ControlTools,
     IReadOnlyDictionary<string, bool> ControlGates,
     HandlePolicySummary Handles,
-    LearnedRoutePolicySummary LearnedRoutes);
+    LearnedRoutePolicySummary LearnedRoutes,
+    PvrPolicySummary Pvr);
 
 public sealed record HandlePolicySummary(int LifetimeMinutes, int Capacity, bool SurvivesRestart);
 
 public sealed record LearnedRoutePolicySummary(bool Persistent, bool WriteAllowed, int MaximumRoutesPerAddon);
+
+public sealed record PvrPolicySummary(bool Enabled, bool PlaybackAllowed);
 
 public sealed record KodiStatusSummary(
     string Alias,
@@ -200,6 +203,61 @@ public sealed record LibraryMaintenanceResult(
     bool ShowDialogs,
     bool Accepted,
     string Completion);
+
+public sealed record PvrChannelSummary(
+    string? Name,
+    string ChannelType,
+    int? ChannelNumber,
+    int? SubchannelNumber,
+    string? CurrentBroadcast,
+    string? NextBroadcast,
+    bool IsRecording,
+    bool HasIcon,
+    string Handle);
+
+public sealed record PvrChannelPageSummary(
+    string Alias,
+    string ChannelType,
+    string? GroupName,
+    int Start,
+    int End,
+    int Total,
+    IReadOnlyList<PvrChannelSummary> Channels);
+
+public sealed record PvrRecordingSummary(
+    string? Title,
+    string? Channel,
+    string? StartTime,
+    string? EndTime,
+    int? RuntimeSeconds,
+    string WatchState,
+    double ResumePositionSeconds,
+    string Handle);
+
+public sealed record PvrRecordingPageSummary(
+    string Alias,
+    int Start,
+    int End,
+    int Total,
+    IReadOnlyList<PvrRecordingSummary> Recordings);
+
+public sealed record PvrTimerSummary(
+    string? Title,
+    string? Summary,
+    string? StartTime,
+    string? EndTime,
+    string? State,
+    bool IsRadio,
+    bool IsTimerRule,
+    bool IsReadOnly,
+    bool IsReminder);
+
+public sealed record PvrTimerPageSummary(
+    string Alias,
+    int Start,
+    int End,
+    int Total,
+    IReadOnlyList<PvrTimerSummary> Timers);
 
 public sealed record PageSummary(
     string Alias,

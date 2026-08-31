@@ -12,6 +12,7 @@ public sealed class KodiOptions
     public KodiControlOptions Controls { get; set; } = new();
     public HandleOptions Handles { get; set; } = new();
     public LearnedRouteOptions LearnedRoutes { get; set; } = new();
+    public PvrOptions Pvr { get; set; } = new();
     public List<KodiInstanceOptions> Instances { get; set; } = [];
 }
 
@@ -29,6 +30,12 @@ public sealed class KodiControlOptions
     public bool AllowFavourites { get; set; }
     public bool AllowLibraryScan { get; set; }
     public bool AllowLibraryClean { get; set; }
+    public bool AllowPvrPlayback { get; set; }
+}
+
+public sealed class PvrOptions
+{
+    public bool Enabled { get; set; }
 }
 
 public sealed class HandleOptions

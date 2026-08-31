@@ -4,7 +4,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 58080,
     [ValidateRange(1, 1000)]
-    [int]$ExpectedToolCount = 49,
+    [int]$ExpectedToolCount = 53,
     [switch]$ProbeAddons,
     [switch]$AllowLocalConfiguration,
     [ValidateRange(0, 3)]
@@ -30,7 +30,8 @@ param(
     [switch]$ProbeUpNext,
     [switch]$ProbeVideoMetadata,
     [switch]$ProbeMusicHistory,
-    [switch]$ProbeRouteHealth
+    [switch]$ProbeRouteHealth,
+    [switch]$ProbePvr
 )
 
 $ErrorActionPreference = 'Stop'
@@ -123,6 +124,10 @@ try {
     if (-not ($tools | Where-Object name -eq 'kodi_play_music')) { throw 'Packaged server is missing kodi_play_music.' }
     if (-not ($tools | Where-Object name -eq 'kodi_check_addon_routes')) { throw 'Packaged server is missing kodi_check_addon_routes.' }
     if (-not ($tools | Where-Object name -eq 'kodi_library_maintenance')) { throw 'Packaged server is missing kodi_library_maintenance.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_list_pvr_channels')) { throw 'Packaged server is missing kodi_list_pvr_channels.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_list_pvr_recordings')) { throw 'Packaged server is missing kodi_list_pvr_recordings.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_list_pvr_timers')) { throw 'Packaged server is missing kodi_list_pvr_timers.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_play_pvr')) { throw 'Packaged server is missing kodi_play_pvr.' }
     $localConfigurationIncluded = Test-Path (Join-Path $publishDirectory 'KodiMCPSharp.Local.json')
     if ($localConfigurationIncluded -and -not $AllowLocalConfiguration) { throw 'Private local configuration was included in the package.' }
 
@@ -478,6 +483,15 @@ try {
         $summary.LearnedRouteTotal = $routeHealth.total
         $summary.LearnedRouteReachable = $routeHealth.reachable
         $summary.LearnedRouteUnavailable = $routeHealth.unavailable
+    }
+    if ($ProbePvr) {
+        if ($health.configuredInstances -lt 1) { throw 'PVR probing requires a configured instance.' }
+        $pvrChannels = Invoke-SmokeTool 150 'kodi_list_pvr_channels' @{ channelType = 'tv'; page = 0; pageSize = 10 }
+        $pvrRecordings = Invoke-SmokeTool 151 'kodi_list_pvr_recordings' @{ page = 0; pageSize = 10 }
+        $pvrTimers = Invoke-SmokeTool 152 'kodi_list_pvr_timers' @{ page = 0; pageSize = 10 }
+        $summary.PvrChannelTotal = $pvrChannels.total
+        $summary.PvrRecordingTotal = $pvrRecordings.total
+        $summary.PvrTimerTotal = $pvrTimers.total
     }
 
     [pscustomobject]$summary

@@ -18,6 +18,7 @@ public enum HandleAction
     AddFavourite = 64,
     RemoveFavourite = 128,
     MovieSetBrowse = 256,
+    PvrPlay = 512,
 }
 
 public sealed record FavouriteDescriptor(
