@@ -206,6 +206,8 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - 2026-08-31: The 45-tool Windows package passed safe discovery and live Kodi 21 accepted video-tag listing, movie-set listing and opaque traversal, and exact rich movie details. Acceptance output retained only counts and booleans, not titles, identifiers, or targets.
 - 2026-08-31: Added bounded recently played song/album history and gated exact artist/album playback. Semantic playback resolves ambiguity before opening Kodi's supported private library identifier; IDs are never accepted or returned. The Release suite passes 100 tests and the source catalogue contains 47 tools.
 - 2026-08-31: The 47-tool Windows package passed safe discovery and live Kodi 21 accepted both recently played music domains. Acceptance retained only aggregate song/album counts. Semantic playback remains synthetic because live acceptance would start media.
+- 2026-08-31: Added read-only learned-route health with one-call enabled add-on discovery and an opt-in one-item probe for fixed browse routes. Parameterized routes are never invoked with invented input, playable routes never start media, per-route failures are isolated, and raw targets remain private. The Release suite passes 101 tests and the source catalogue contains 48 tools.
+- 2026-08-31: The 48-tool Windows package passed safe discovery and live Kodi 21 accepted the learned-route health request. The runtime store was empty after prior acceptance cleanup, so no route target was invoked.
 - Linux systemd and Docker runtime remain unverified.
 
 ## Next actions

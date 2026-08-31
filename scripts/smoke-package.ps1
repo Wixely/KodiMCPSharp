@@ -4,7 +4,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 58080,
     [ValidateRange(1, 1000)]
-    [int]$ExpectedToolCount = 47,
+    [int]$ExpectedToolCount = 48,
     [switch]$ProbeAddons,
     [switch]$AllowLocalConfiguration,
     [ValidateRange(0, 3)]
@@ -29,7 +29,8 @@ param(
     [switch]$ProbeQueues,
     [switch]$ProbeUpNext,
     [switch]$ProbeVideoMetadata,
-    [switch]$ProbeMusicHistory
+    [switch]$ProbeMusicHistory,
+    [switch]$ProbeRouteHealth
 )
 
 $ErrorActionPreference = 'Stop'
@@ -120,6 +121,7 @@ try {
     if (-not ($tools | Where-Object name -eq 'kodi_get_video_details')) { throw 'Packaged server is missing kodi_get_video_details.' }
     if (-not ($tools | Where-Object name -eq 'kodi_list_recently_played_music')) { throw 'Packaged server is missing kodi_list_recently_played_music.' }
     if (-not ($tools | Where-Object name -eq 'kodi_play_music')) { throw 'Packaged server is missing kodi_play_music.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_check_addon_routes')) { throw 'Packaged server is missing kodi_check_addon_routes.' }
     $localConfigurationIncluded = Test-Path (Join-Path $publishDirectory 'KodiMCPSharp.Local.json')
     if ($localConfigurationIncluded -and -not $AllowLocalConfiguration) { throw 'Private local configuration was included in the package.' }
 
@@ -468,6 +470,13 @@ try {
         $recentAlbums = Invoke-SmokeTool 131 'kodi_list_recently_played_music' @{ domain = 'albums'; page = 0; pageSize = 10 }
         $summary.RecentSongTotal = $recentSongs.total
         $summary.RecentAlbumTotal = $recentAlbums.total
+    }
+    if ($ProbeRouteHealth) {
+        if ($health.configuredInstances -lt 1) { throw 'Route health probing requires a configured instance.' }
+        $routeHealth = Invoke-SmokeTool 140 'kodi_check_addon_routes' @{ probeFixedBrowseRoutes = $true }
+        $summary.LearnedRouteTotal = $routeHealth.total
+        $summary.LearnedRouteReachable = $routeHealth.reachable
+        $summary.LearnedRouteUnavailable = $routeHealth.unavailable
     }
 
     [pscustomobject]$summary

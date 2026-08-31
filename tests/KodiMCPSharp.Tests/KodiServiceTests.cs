@@ -1851,6 +1851,50 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task LearnedRouteHealth_ProbesOnlyFixedBrowseRoutesAndHidesTargets()
+    {
+        const string fixedTarget = "plugin://plugin.video.available/fixed";
+        const string templateTarget = "plugin://plugin.video.available/search?q=__KODIMCPSHARP_INPUT__";
+        var probedDirectories = new List<string?>();
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Addons.GetAddons" => Element("""
+                {"addons":[{"addonid":"plugin.video.available","name":"Available","enabled":true}]}
+                """),
+            "Files.GetDirectory" => CaptureDirectory(write, directory => probedDirectories.Add(directory)),
+            _ => throw new InvalidOperationException(method),
+        });
+        var options = new KodiOptions
+        {
+            DefaultAlias = "room",
+            Handles = new HandleOptions { LifetimeMinutes = 15, Capacity = 100 },
+        };
+        var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", fake)], "room");
+        var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
+        var store = new TestLearnedRouteStore();
+        await store.SaveAsync(new LearnedRouteEntry("room", "plugin.video.available", "Available", "fixed", fixedTarget,
+            "video", "directory", HandleAction.Browse, DateTimeOffset.UtcNow), TestContext.Current.CancellationToken);
+        await store.SaveAsync(new LearnedRouteEntry("room", "plugin.video.available", "Available", "search", templateTarget,
+            "video", "directory", HandleAction.Browse, DateTimeOffset.UtcNow, new LearnedRouteParameter("input", "string", 200)),
+            TestContext.Current.CancellationToken);
+        await store.SaveAsync(new LearnedRouteEntry("room", "plugin.video.missing", "Missing", "play", "plugin://plugin.video.missing/play",
+            "video", "item", HandleAction.Play, DateTimeOffset.UtcNow), TestContext.Current.CancellationToken);
+        var service = new KodiService(registry, handles, store, Options.Create(options), new SafeText(), TimeProvider.System);
+
+        var result = await service.CheckAddonRoutesAsync("room", true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, result.Total);
+        Assert.Equal(1, result.Reachable);
+        Assert.Equal(1, result.Unavailable);
+        Assert.Equal([fixedTarget], probedDirectories);
+        Assert.Contains(result.Routes, route => route.Status == "input-required-not-probed");
+        Assert.Contains(result.Routes, route => route.Status == "addon-unavailable");
+        var serialized = JsonSerializer.Serialize(result);
+        Assert.DoesNotContain("plugin://", serialized, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("__KODIMCPSHARP_INPUT__", serialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ParameterizedLearnedRoute_InfersObservedValueAndBindsEncodedInput()
     {
         string? receivedDirectory = null;

@@ -285,6 +285,15 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.ListAddonRoutesAsync(alias, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_check_addon_routes"),
+     Description("Check learned-route add-on availability. Optionally perform a bounded read-only probe of fixed browse routes; parameterized and playable routes are never invoked with invented input.")]
+    public static async Task<string> CheckAddonRoutes(
+        KodiService service,
+        [Description("When true, request at most one item from each fixed browsable route. False checks only whether its add-on is enabled.")] bool probeFixedBrowseRoutes = false,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.CheckAddonRoutesAsync(alias, probeFixedBrowseRoutes, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_bind_addon_route"),
      Description("Bind validated text to a parameterized learned add-on route and return a fresh opaque browse/play handle. The internal plug-in parameter and target remain server-side.")]
     public static string BindAddonRoute(

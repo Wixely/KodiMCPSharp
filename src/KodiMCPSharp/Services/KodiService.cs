@@ -36,6 +36,7 @@ public sealed partial class KodiService
         "kodi_list_recently_played_music",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
+        "kodi_check_addon_routes",
         "kodi_get_queue",
     ];
 
@@ -1948,6 +1949,79 @@ public sealed partial class KodiService
         return new LearnedRoutePageSummary(instance.Alias, routes.Select(CreateLearnedRouteSummary).ToArray());
     }
 
+    public async Task<LearnedRouteHealthResult> CheckAddonRoutesAsync(
+        string? alias,
+        bool probeFixedBrowseRoutes,
+        CancellationToken cancellationToken)
+    {
+        var instance = _registry.Resolve(alias);
+        var routes = await _learnedRoutes.ListAsync(instance.Alias, cancellationToken);
+        try
+        {
+            var addonResult = await instance.Client.CallAsync("Addons.GetAddons", writer =>
+            {
+                writer.WriteString("type", "xbmc.python.pluginsource");
+                writer.WriteBoolean("enabled", true);
+                WriteStringArray(writer, "properties", ["name", "enabled"]);
+            }, cancellationToken);
+            var availableAddonIds = GetArray(addonResult, "addons")
+                .Select(item => GetString(item, "addonid"))
+                .Where(value => value is not null)
+                .Cast<string>()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var health = new List<LearnedRouteHealthSummary>(routes.Count);
+            foreach (var route in routes)
+            {
+                var addonAvailable = availableAddonIds.Contains(route.AddonId);
+                if (!addonAvailable)
+                {
+                    health.Add(RouteHealth(route, false, false, false, null, "addon-unavailable"));
+                    continue;
+                }
+                if (route.Parameter is not null)
+                {
+                    health.Add(RouteHealth(route, true, false, null, null, "input-required-not-probed"));
+                    continue;
+                }
+                if (!probeFixedBrowseRoutes || (route.Actions & HandleAction.Browse) == 0)
+                {
+                    var status = (route.Actions & HandleAction.Browse) != 0 ? "ready-not-probed" : "playable-not-probed";
+                    health.Add(RouteHealth(route, true, false, null, null, status));
+                    continue;
+                }
+                try
+                {
+                    var probe = await instance.Client.CallAsync("Files.GetDirectory", writer =>
+                    {
+                        writer.WriteString("directory", route.Target);
+                        writer.WriteString("media", route.Media);
+                        WriteLimits(writer, 0, 1);
+                    }, cancellationToken);
+                    var itemCount = GetArray(probe, "files").Length;
+                    health.Add(RouteHealth(route, true, true, true, itemCount, "reachable"));
+                }
+                catch (KodiRpcException exception)
+                {
+                    health.Add(RouteHealth(route, true, true, false, null,
+                        $"probe-failed-{exception.Kind.ToString().ToLowerInvariant()}"));
+                }
+            }
+            return new LearnedRouteHealthResult(
+                instance.Alias,
+                probeFixedBrowseRoutes,
+                health.Count,
+                health.Count(item => item.Reachable == true),
+                health.Count(item => !item.AddonAvailable || item.Reachable == false),
+                health.Count(item => !item.Probed),
+                _timeProvider.GetUtcNow(),
+                health);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
     public BoundLearnedRouteSummary BindAddonRoute(string? alias, string handle, string input)
     {
         var instance = _registry.Resolve(alias);
@@ -3062,6 +3136,25 @@ public sealed partial class KodiService
             route.SavedUtc,
             handle);
     }
+
+    private LearnedRouteHealthSummary RouteHealth(
+        LearnedRouteEntry route,
+        bool addonAvailable,
+        bool probed,
+        bool? reachable,
+        int? sampleItemCount,
+        string status) =>
+        new(
+            _safeText.Clean(route.AddonName),
+            _safeText.Clean(route.Name, 100) ?? "learned-route",
+            route.Parameter is not null,
+            (route.Actions & HandleAction.Browse) != 0,
+            (route.Actions & HandleAction.Play) != 0,
+            addonAvailable,
+            probed,
+            reachable,
+            sampleItemCount,
+            status);
 
     private static string InferSingleInputTemplate(string target, string sampleValue)
     {

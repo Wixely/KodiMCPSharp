@@ -292,6 +292,28 @@ public sealed record LearnedRoutePageSummary(
     string Alias,
     IReadOnlyList<LearnedRouteSummary> Routes);
 
+public sealed record LearnedRouteHealthSummary(
+    string? AddonName,
+    string Name,
+    bool RequiresInput,
+    bool CanBrowse,
+    bool CanPlay,
+    bool AddonAvailable,
+    bool Probed,
+    bool? Reachable,
+    int? SampleItemCount,
+    string Status);
+
+public sealed record LearnedRouteHealthResult(
+    string Alias,
+    bool ProbeRequested,
+    int Total,
+    int Reachable,
+    int Unavailable,
+    int NotProbed,
+    DateTimeOffset CheckedUtc,
+    IReadOnlyList<LearnedRouteHealthSummary> Routes);
+
 public sealed record LearnedRouteMutationResult(string Alias, string Name, bool Removed);
 
 public sealed record BoundLearnedRouteSummary(
