@@ -1,0 +1,114 @@
+[CmdletBinding()]
+param(
+    [string]$Executable = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts\win-x64\KodiMCPSharp.exe'),
+    [ValidateRange(1024, 65535)]
+    [int]$Port = 58080,
+    [ValidateRange(1, 1000)]
+    [int]$ExpectedToolCount = 34,
+    [switch]$ProbeAddons,
+    [switch]$AllowLocalConfiguration
+)
+
+$ErrorActionPreference = 'Stop'
+$resolvedExecutable = (Resolve-Path $Executable).Path
+$serverProcess = Start-Process -FilePath $resolvedExecutable `
+    -ArgumentList "--Server:Port=$Port" `
+    -WorkingDirectory (Split-Path $resolvedExecutable) `
+    -WindowStyle Hidden `
+    -PassThru
+
+try {
+    $health = $null
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        try {
+            $health = Invoke-RestMethod -Uri "http://localhost:$Port/healthz" -TimeoutSec 2
+            break
+        }
+        catch {
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    if ($null -eq $health) { throw 'Packaged server did not become healthy.' }
+
+    $headers = @{
+        Accept = 'application/json, text/event-stream'
+        'MCP-Protocol-Version' = '2025-06-18'
+    }
+    $initialize = @{
+        jsonrpc = '2.0'
+        id = 1
+        method = 'initialize'
+        params = @{
+            protocolVersion = '2025-06-18'
+            capabilities = @{}
+            clientInfo = @{ name = 'package-smoke'; version = '1.0' }
+        }
+    } | ConvertTo-Json -Depth 5 -Compress
+    $initializeResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/mcp" `
+        -Method Post -ContentType 'application/json' -Headers $headers -Body $initialize -TimeoutSec 10
+    $initializeDataLine = $initializeResponse.Content -split "`n" | Where-Object { $_ -like 'data:*' } | Select-Object -Last 1
+    $initializeJson = if ($initializeDataLine) { $initializeDataLine.Substring(5).Trim() } else { $initializeResponse.Content }
+    $initializePayload = $initializeJson | ConvertFrom-Json
+
+    $listTools = @{ jsonrpc = '2.0'; id = 2; method = 'tools/list'; params = @{} } | ConvertTo-Json -Compress
+    $toolsResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/mcp" `
+        -Method Post -ContentType 'application/json' -Headers $headers -Body $listTools -TimeoutSec 10
+    $dataLine = $toolsResponse.Content -split "`n" | Where-Object { $_ -like 'data:*' } | Select-Object -Last 1
+    $jsonText = if ($dataLine) { $dataLine.Substring(5).Trim() } else { $toolsResponse.Content }
+    $payload = $jsonText | ConvertFrom-Json
+    $tools = @($payload.result.tools)
+    $forbiddenInputs = @('method', 'json', 'path', 'plugin', 'directory', 'url', 'endpoint', 'credential', 'password')
+    $runtimeInputs = @($tools | ForEach-Object { @($_.inputSchema.properties.PSObject.Properties.Name) })
+    $foundForbiddenInputs = @($runtimeInputs | Where-Object { $forbiddenInputs -contains $_ })
+    $publishDirectory = Split-Path $resolvedExecutable
+
+    if ($health.status -ne 'ok') { throw "Unexpected health status '$($health.status)'." }
+    if ($initializePayload.result.protocolVersion -ne '2025-06-18') { throw 'Packaged server negotiated an unexpected MCP protocol.' }
+    if ($tools.Count -ne $ExpectedToolCount) { throw "Expected $ExpectedToolCount tools but discovered $($tools.Count)." }
+    if ($foundForbiddenInputs.Count -gt 0) { throw 'Packaged tool schemas expose a forbidden raw-target input.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_resume')) { throw 'Packaged server is missing kodi_resume.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_play_movie')) { throw 'Packaged server is missing kodi_play_movie.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_play_episode')) { throw 'Packaged server is missing kodi_play_episode.' }
+    $localConfigurationIncluded = Test-Path (Join-Path $publishDirectory 'KodiMCPSharp.Local.json')
+    if ($localConfigurationIncluded -and -not $AllowLocalConfiguration) { throw 'Private local configuration was included in the package.' }
+
+    $summary = [ordered]@{
+        Health = $health.status
+        ReadOnly = $health.readOnly
+        ConfiguredInstances = $health.configuredInstances
+        InitializeStatus = $initializeResponse.StatusCode
+        Protocol = $initializePayload.result.protocolVersion
+        ToolCount = $tools.Count
+        ForbiddenInputCount = $foundForbiddenInputs.Count
+        LocalConfigurationIncluded = $localConfigurationIncluded
+    }
+    if ($ProbeAddons) {
+        if ($health.configuredInstances -lt 1) { throw 'Add-on probing requires a configured instance.' }
+        $callAddons = @{
+            jsonrpc = '2.0'
+            id = 3
+            method = 'tools/call'
+            params = @{ name = 'kodi_list_addons'; arguments = @{ page = 0; pageSize = 25 } }
+        } | ConvertTo-Json -Depth 5 -Compress
+        $addonResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/mcp" `
+            -Method Post -ContentType 'application/json' -Headers $headers -Body $callAddons -TimeoutSec 20
+        $addonDataLine = $addonResponse.Content -split "`n" | Where-Object { $_ -like 'data:*' } | Select-Object -First 1
+        $addonJson = if ($addonDataLine) { $addonDataLine.Substring(5).Trim() } else { $addonResponse.Content }
+        $addonPayload = $addonJson | ConvertFrom-Json
+        if ($addonPayload.error) { throw "The packaged add-on listing call failed: $($addonPayload.error.message)" }
+        if ($addonPayload.result.isError) {
+            throw "The packaged add-on listing call failed: $($addonPayload.result.content[0].text)"
+        }
+        $addonPage = $addonPayload.result.content[0].text | ConvertFrom-Json
+        $summary.AddonCount = @($addonPage.addons).Count
+        $summary.BrowsableAddonCount = @($addonPage.addons | Where-Object browsable).Count
+    }
+
+    [pscustomobject]$summary
+}
+finally {
+    if ($serverProcess -and -not $serverProcess.HasExited) {
+        Stop-Process -Id $serverProcess.Id
+        Wait-Process -Id $serverProcess.Id -Timeout 5 -ErrorAction SilentlyContinue
+    }
+}

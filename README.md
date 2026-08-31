@@ -138,6 +138,8 @@ The MCP password can be supplied by a client as `Authorization: Bearer <password
 dotnet run --project .\src\KodiMCPSharp\KodiMCPSharp.csproj
 ```
 
+After publishing Windows, run `scripts\smoke-package.ps1` against the executable to verify safe startup, MCP negotiation, the expected tool catalogue, forbidden-input absence, and local-config exclusion. Add `-ProbeAddons` only with a private configured package when Kodi is reachable; the probe reports counts rather than add-on identities.
+
 The default MCP endpoint is `http://localhost:5712/mcp`. Health endpoints are `/healthz` (process health) and `/readyz` (whether at least one Kodi alias is configured). The service is allowed to start with no Kodi instances so packaging can be smoke-tested safely.
 
 VS Code build, test, run, and debug definitions are included under `.vscode`.
@@ -201,6 +203,6 @@ Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux an
 
 ## Project status and next action
 
-Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, and single-call playback resolution. The source catalogue contains 34 bounded tools; the last packaged runtime acceptance covered the preceding 31-tool milestone. Live acceptance covers every new discovery domain, opaque TV show → season → playable episode traversal, and restoring active playback to Kodi's full-screen video window. Favourite mutation, bulk watch state, the latest one-call helpers, other expanded controls, and representative add-on traversal remain to be verified live.
+Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the Linux package passes runtime health and exposes all 34 tools through MCP discovery. Live acceptance covers every new discovery domain, opaque TV show → season → playable episode traversal, and restoring active playback to Kodi's full-screen video window. Favourite mutation, bulk watch state, the latest one-call helpers, other expanded controls, and representative add-on traversal remain to be verified live.
 
 See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.
