@@ -11,6 +11,7 @@ Status: browsing, persistent fixed and single-input learned add-on routes, guard
 | `kodi_list_instances` | Probe configured aliases and report JSON-RPC availability/version |
 | `kodi_get_capabilities` | Report the effective read-only policy, tool catalogue, and handle policy |
 | `kodi_get_status` | Read application volume/mute state and active player summaries |
+| `kodi_list_playback_events` | Read bounded sanitized playback events after an optional sequence cursor |
 | `kodi_search_library` | Search movies and TV shows by title, year, and genre; search episodes, songs, or albums by name |
 | `kodi_list_genres` | List valid movie, TV-show, or music genres |
 | `kodi_list_video_tags` | List movie, TV-show, or music-video tags |
@@ -105,7 +106,7 @@ Only episodes with both season and episode numbers are eligible. Season zero is 
 - Network access from KodiMCPSharp to Kodi's configured webserver.
 - Kodi webserver authentication is strongly recommended. Never expose Kodi's control interfaces directly to the internet.
 
-The first slice uses JSON-RPC over HTTP POST at Kodi's `/jsonrpc` endpoint. WebSocket notifications are intentionally deferred; status calls read current state directly.
+Commands and authoritative state reads use JSON-RPC over HTTP POST at Kodi's `/jsonrpc` endpoint. An optional WebSocket connection can capture sanitized player notifications for efficient incremental polling; it is disabled by default and does not replace authoritative status reads.
 
 ## Configure
 
@@ -125,10 +126,16 @@ Use this local-only shape, replacing every placeholder on the operator machine:
       "AllowWrite": true,
       "MaximumRoutesPerAddon": 100
     },
+    "PlaybackNotifications": {
+      "Enabled": true,
+      "Capacity": 200,
+      "ReconnectDelaySeconds": 5
+    },
     "Instances": [
       {
         "Alias": "living-room",
         "Endpoint": "<absolute-http-or-https-endpoint-ending-in-/jsonrpc>",
+        "WebSocketEndpoint": "<absolute-ws-or-wss-endpoint-ending-in-/jsonrpc>",
         "Username": "<kodi-webserver-user>",
         "Password": "<kodi-webserver-password>"
       }
@@ -143,6 +150,7 @@ Configuration is validated at startup:
 
 - aliases allow only ASCII letters, digits, `-`, and `_` and are compared case-insensitively;
 - endpoints must be absolute HTTP(S) URIs ending in `/jsonrpc`;
+- optional WebSocket endpoints must be absolute WS(S) URIs ending in `/jsonrpc`; enabling playback notifications requires at least one explicit WebSocket endpoint;
 - a non-loopback MCP bind requires `Server:Password`;
 - page, response-size, timeout, handle-lifetime, handle-capacity, and learned-route limits have hard bounds;
 - invalid TLS certificates are rejected unless explicitly opted out per instance.
@@ -150,6 +158,8 @@ Configuration is validated at startup:
 Controls require `Kodi:ReadOnly=false` plus their independent `Kodi:Controls` gate: `AllowPlayback`, `AllowPlayerControl`, `AllowSeek`, `AllowVolume`, `AllowStreamSelection`, `AllowPlaybackModes`, `AllowPlaylists`, `AllowFullscreenVideo`, `AllowWatchState`, `AllowFavourites`, `AllowLibraryScan`, `AllowLibraryClean`, or `AllowPvrPlayback`. The checked-in defaults keep `ReadOnly=true` and every gate false. Play, playlist-add, watch-state, and favourite changes accept only short-lived handles returned by search/browse; they cannot accept caller-supplied paths, URLs, or Kodi database IDs. Library maintenance is whole-library only and likewise has no directory/path input. Setting an episode watched or unwatched clears its resume point and verifies the resulting state.
 
 PVR support is additionally hidden behind `Kodi:Pvr:Enabled=true`, which is false by default. Discovery can then list the first TV/radio channel group, recordings, and timers. Playback requires `Kodi:ReadOnly=false` and `Kodi:Controls:AllowPvrPlayback=true`; channel and recording IDs remain behind action-scoped opaque handles.
+
+Playback notifications are read-only but opt-in through `Kodi:PlaybackNotifications:Enabled=true`. Configure each participating instance's `WebSocketEndpoint` explicitly; Kodi exposes this transport on its separately enabled JSON-RPC TCP port (9090 by default) at `/jsonrpc`. Kodi's network-control WebSocket is not protected by the HTTP webserver credentials, and KodiMCPSharp deliberately does not send those credentials in its handshake, so expose that port only on a trusted private network. The in-memory per-instance queue is capped by `Capacity`, survives neither restart nor overflow, and contains only event kind, safe labels, season/episode, player state, and timestamps. `kodi_list_playback_events` accepts an `afterSequence` cursor so clients can retrieve only newer events. Raw notification payloads, endpoints, paths, and Kodi database identifiers are neither returned nor logged.
 
 Learned-route writes use the separate `Kodi:LearnedRoutes:AllowWrite` gate, which is also false in checked-in configuration. This gate may be enabled while Kodi remains read-only because it writes only KodiMCPSharp's local route store.
 

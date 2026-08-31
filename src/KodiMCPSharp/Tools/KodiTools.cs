@@ -33,6 +33,15 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.GetStatusAsync(alias, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_list_playback_events"),
+     Description("List bounded, sanitized Kodi playback notifications after an optional sequence cursor. Reports connection state without exposing endpoints or raw media paths.")]
+    public static string ListPlaybackEvents(
+        KodiService service,
+        [Description("Return only events with a sequence greater than this cursor. Omit for the newest bounded page.")] long? afterSequence = null,
+        [Description("Maximum events to return, from 1 through 200.")] int limit = 50,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null) =>
+        JsonSerializer.Serialize(service.ListPlaybackEvents(alias, afterSequence, limit), JsonOptions);
+
     [McpServerTool(Name = "kodi_search_library"),
      Description("Search a bounded Kodi library domain. Movies and TV shows support combinable title, year, and genre filters. Returns safe metadata and opaque short-lived item handles; never raw media paths.")]
     public static async Task<string> SearchLibrary(

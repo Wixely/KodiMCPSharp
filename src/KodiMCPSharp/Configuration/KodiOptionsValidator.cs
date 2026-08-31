@@ -21,6 +21,10 @@ public sealed class KodiOptionsValidator : IValidateOptions<KodiOptions>
         {
             failures.Add("Kodi:LearnedRoutes:MaximumRoutesPerAddon must be between 1 and 1000.");
         }
+        if (options.PlaybackNotifications.Capacity is < 10 or > 10000)
+            failures.Add("Kodi:PlaybackNotifications:Capacity must be between 10 and 10000.");
+        if (options.PlaybackNotifications.ReconnectDelaySeconds is < 1 or > 300)
+            failures.Add("Kodi:PlaybackNotifications:ReconnectDelaySeconds must be between 1 and 300.");
 
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var instance in options.Instances)
@@ -44,7 +48,20 @@ public sealed class KodiOptionsValidator : IValidateOptions<KodiOptions>
             {
                 failures.Add($"Kodi instance '{instance.Alias}' must use an absolute HTTP(S) endpoint ending in /jsonrpc without embedded credentials, query, or fragment.");
             }
+            if (!string.IsNullOrEmpty(instance.WebSocketEndpoint) &&
+                (!Uri.TryCreate(instance.WebSocketEndpoint, UriKind.Absolute, out var webSocketEndpoint) ||
+                 webSocketEndpoint.Scheme is not ("ws" or "wss") ||
+                 webSocketEndpoint.UserInfo.Length > 0 ||
+                 webSocketEndpoint.Query.Length > 0 ||
+                 webSocketEndpoint.Fragment.Length > 0 ||
+                 !webSocketEndpoint.AbsolutePath.TrimEnd('/').EndsWith("/jsonrpc", StringComparison.OrdinalIgnoreCase)))
+            {
+                failures.Add($"Kodi instance '{instance.Alias}' WebSocket endpoint must use absolute WS(S), end in /jsonrpc, and contain no embedded credentials, query, or fragment.");
+            }
         }
+
+        if (options.PlaybackNotifications.Enabled && !options.Instances.Any(instance => !string.IsNullOrEmpty(instance.WebSocketEndpoint)))
+            failures.Add("Kodi playback notifications require at least one configured instance WebSocketEndpoint.");
 
         if (options.DefaultAlias.Length > 0 && !aliases.Contains(options.DefaultAlias))
         {

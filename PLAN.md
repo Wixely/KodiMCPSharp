@@ -157,7 +157,7 @@ Use JSON, environment variables, and command-line configuration consistently wit
 
 - Which Kodi version and host platforms are the first acceptance targets?
 - Which two or three installed add-ons and exact workflows must work initially?
-- Which JSON-RPC transport or combination is required for reliable state plus event updates?
+- HTTP remains authoritative for commands and current state; optional explicit WebSocket connections provide bounded incremental player notifications.
 - Is Kodi's remote interface already enabled on the target, and which authentication mode will be used?
 - Which library domains are required initially: video, music, pictures, PVR/live TV, or all?
 - Are favourites, playlists, subtitles/audio streams, and GUI/window navigation required in the first release?
@@ -211,6 +211,9 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - 2026-08-31: Added `kodi_library_maintenance` with closed video/music and scan/clean inputs, separate `AllowLibraryScan` and `AllowLibraryClean` gates, global read-only enforcement, and no directory/path parameter. Kodi acknowledgment is reported as accepted-started rather than falsely claiming asynchronous completion. The Release suite passes 103 tests and the source catalogue contains 49 tools.
 - 2026-08-31: Added disabled-by-default PVR support for bounded TV/radio channels, recordings with watch/resume state, and timers/reminders. Channel and recording playback uses private library identifiers behind PVR-scoped opaque handles and requires a separate playback gate. The Release suite passes 106 tests and the source catalogue contains 53 tools.
 - 2026-08-31: The 53-tool Windows package passed safe discovery. Live PVR discovery could not be accepted because the target Kodi returned remote execution failure and no availability state for read-only PVR methods, consistent with no usable PVR backend; PVR remains disabled by default.
+- 2026-08-31: Added disabled-by-default WebSocket playback notifications with explicit per-instance WS(S) endpoints, bounded in-memory retention, sequence cursors, reconnect status, and a sanitized read-only event model. Synthetic privacy coverage proves raw paths and Kodi database identifiers are not returned. The Release suite passes 114 tests and the source catalogue contains 54 tools.
+- 2026-08-31: The target Kodi HTTP interface remained reachable, but its standard JSON-RPC TCP port was closed and its webserver endpoint did not accept a WebSocket connection. Live notification capture therefore remains pending remote event-interface enablement; configured/disconnected status was verified without retaining endpoint, credential, event, or media data.
+- 2026-08-31: Final self-contained single-file publishes completed for `win-x64`, `linux-x64`, and `linux-arm64`. The Windows package passed health, MCP 2025-06-18 negotiation, exact 54-tool discovery, forbidden-input inspection, and private-configuration exclusion. WSL2 has a running systemd environment and the Linux executable starts; Docker runtime verification was unavailable because no Docker daemon is installed. A deployed systemd-service acceptance remains pending an installed package and service account.
 - Linux systemd and Docker runtime remain unverified.
 
 ## Next actions
@@ -239,6 +242,7 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - [x] Add persistent fixed learned add-on routes without accepting or returning raw plug-in targets. - Owner: Agent; completed: 2026-08-30
 - [ ] Validate single-input learned searches against Fen Light and another representative add-on. Fen Light capture, inference, binding, browsing, restart persistence, and cleanup are accepted; the Documentary add-on's Search entry is accepted and awaits a user-completed synthetic results page. YouTube is deferred until an application key is available. Design multi-input templates only if a demonstrated workflow requires them. - Owner: Agent / User
 - [ ] Run a user-approved live acceptance pass for stop/start, seek, volume, stream, mode, and playlist controls without retaining private media data. - Owner: User / Agent
+- [x] Add optional WebSocket player notifications with explicit configuration, bounded retention, reconnect status, cursor-based reads, and no raw notification/path/identifier exposure. - Owner: Agent; completed: 2026-08-31
 - [ ] After technical acceptance, create `Wixely/KodiMCPSharp`, complete the public pre-push review, publish under MIT, and add MCPHub integration as a separately verified milestone. - Owner: User / Agent
 
 ## Recommended next action

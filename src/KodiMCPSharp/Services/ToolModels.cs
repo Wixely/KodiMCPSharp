@@ -11,13 +11,16 @@ public sealed record CapabilitySummary(
     IReadOnlyDictionary<string, bool> ControlGates,
     HandlePolicySummary Handles,
     LearnedRoutePolicySummary LearnedRoutes,
-    PvrPolicySummary Pvr);
+    PvrPolicySummary Pvr,
+    PlaybackNotificationPolicySummary PlaybackNotifications);
 
 public sealed record HandlePolicySummary(int LifetimeMinutes, int Capacity, bool SurvivesRestart);
 
 public sealed record LearnedRoutePolicySummary(bool Persistent, bool WriteAllowed, int MaximumRoutesPerAddon);
 
 public sealed record PvrPolicySummary(bool Enabled, bool PlaybackAllowed);
+
+public sealed record PlaybackNotificationPolicySummary(bool Enabled, int Capacity);
 
 public sealed record KodiStatusSummary(
     string Alias,
@@ -258,6 +261,35 @@ public sealed record PvrTimerPageSummary(
     int End,
     int Total,
     IReadOnlyList<PvrTimerSummary> Timers);
+
+public sealed record PlaybackNotificationSummary(
+    long Sequence,
+    DateTimeOffset ReceivedUtc,
+    string Event,
+    int? PlayerId,
+    string? MediaType,
+    string? Label,
+    int? SeasonNumber,
+    int? EpisodeNumber,
+    int? Speed,
+    bool? Ended,
+    TimeSummary? Time);
+
+public sealed record PlaybackNotificationConnectionSummary(
+    bool Configured,
+    bool Connected,
+    DateTimeOffset? LastConnectedUtc,
+    DateTimeOffset? LastEventUtc,
+    string? LastFailureKind);
+
+public sealed record PlaybackNotificationResult(
+    string Alias,
+    long? AfterSequence,
+    int RequestedLimit,
+    int Returned,
+    long? LatestSequence,
+    PlaybackNotificationConnectionSummary Connection,
+    IReadOnlyList<PlaybackNotificationSummary> Events);
 
 public sealed record PageSummary(
     string Alias,

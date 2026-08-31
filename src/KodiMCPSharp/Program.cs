@@ -76,7 +76,9 @@ try
     builder.Services.AddSingleton<KodiInstanceRegistry>();
     builder.Services.AddSingleton<IHandleStore, InMemoryHandleStore>();
     builder.Services.AddSingleton<ILearnedRouteStore, FileLearnedRouteStore>();
+    builder.Services.AddSingleton<PlaybackNotificationStore>();
     builder.Services.AddSingleton<KodiService>();
+    builder.Services.AddHostedService<KodiWebSocketNotificationService>();
     builder.Services
         .AddMcpServer()
         .WithHttpTransport(options => options.Stateless = true)
@@ -107,7 +109,8 @@ try
         (kodi.Controls.AllowPlayback || kodi.Controls.AllowPlayerControl || kodi.Controls.AllowSeek ||
          kodi.Controls.AllowVolume || kodi.Controls.AllowStreamSelection || kodi.Controls.AllowPlaybackModes ||
          kodi.Controls.AllowPlaylists || kodi.Controls.AllowFullscreenVideo || kodi.Controls.AllowWatchState ||
-         kodi.Controls.AllowFavourites);
+         kodi.Controls.AllowFavourites || kodi.Controls.AllowLibraryScan || kodi.Controls.AllowLibraryClean ||
+         kodi.Controls.AllowPvrPlayback);
 
     app.UseSerilogRequestLogging();
     app.UseMiddleware<McpPasswordMiddleware>();

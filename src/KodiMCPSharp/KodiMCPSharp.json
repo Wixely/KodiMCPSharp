@@ -38,6 +38,11 @@
     "Pvr": {
       "Enabled": false
     },
+    "PlaybackNotifications": {
+      "Enabled": false,
+      "Capacity": 200,
+      "ReconnectDelaySeconds": 5
+    },
     "Instances": []
   },
   "Serilog": {

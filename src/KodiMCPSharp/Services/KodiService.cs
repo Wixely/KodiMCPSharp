@@ -34,6 +34,7 @@ public sealed partial class KodiService
         "kodi_list_recently_watched_movies", "kodi_list_recently_watched_shows",
         "kodi_list_up_next", "kodi_list_movie_sets", "kodi_browse_movie_set", "kodi_list_video_tags", "kodi_get_video_details",
         "kodi_list_recently_played_music",
+        "kodi_list_playback_events",
         "kodi_list_pvr_channels", "kodi_list_pvr_recordings", "kodi_list_pvr_timers",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
@@ -47,6 +48,7 @@ public sealed partial class KodiService
     private readonly KodiOptions _options;
     private readonly SafeText _safeText;
     private readonly TimeProvider _timeProvider;
+    private readonly PlaybackNotificationStore? _playbackNotifications;
 
     public KodiService(
         KodiInstanceRegistry registry,
@@ -54,7 +56,8 @@ public sealed partial class KodiService
         ILearnedRouteStore learnedRoutes,
         IOptions<KodiOptions> options,
         SafeText safeText,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        PlaybackNotificationStore? playbackNotifications = null)
     {
         _registry = registry;
         _handles = handles;
@@ -62,6 +65,7 @@ public sealed partial class KodiService
         _options = options.Value;
         _safeText = safeText;
         _timeProvider = timeProvider;
+        _playbackNotifications = playbackNotifications;
     }
 
     public async Task<IReadOnlyList<InstanceSummary>> ListInstancesAsync(CancellationToken cancellationToken)
@@ -124,7 +128,19 @@ public sealed partial class KodiService
         Handles: new HandlePolicySummary(_options.Handles.LifetimeMinutes, _options.Handles.Capacity, false),
         LearnedRoutes: new LearnedRoutePolicySummary(true, _options.LearnedRoutes.AllowWrite, _options.LearnedRoutes.MaximumRoutesPerAddon),
         Pvr: new PvrPolicySummary(_options.Pvr.Enabled,
-            !_options.ReadOnly && _options.Pvr.Enabled && _options.Controls.AllowPvrPlayback));
+            !_options.ReadOnly && _options.Pvr.Enabled && _options.Controls.AllowPvrPlayback),
+        PlaybackNotifications: new PlaybackNotificationPolicySummary(
+            _options.PlaybackNotifications.Enabled, _options.PlaybackNotifications.Capacity));
+
+    public PlaybackNotificationResult ListPlaybackEvents(string? alias, long? afterSequence, int limit)
+    {
+        if (afterSequence is < 0) throw new McpException("afterSequence must be zero or greater.");
+        if (limit is < 1 or > 200) throw new McpException("limit must be between 1 and 200.");
+        var instance = _registry.Resolve(alias);
+        return _playbackNotifications?.Read(instance.Alias, afterSequence, limit) ??
+            new PlaybackNotificationResult(instance.Alias, afterSequence, limit, 0, null,
+                new PlaybackNotificationConnectionSummary(false, false, null, null, null), []);
+    }
 
     public async Task<PlaybackResult> PlayItemAsync(string? alias, string handle, CancellationToken cancellationToken)
     {

@@ -13,6 +13,7 @@ public sealed class KodiOptions
     public HandleOptions Handles { get; set; } = new();
     public LearnedRouteOptions LearnedRoutes { get; set; } = new();
     public PvrOptions Pvr { get; set; } = new();
+    public PlaybackNotificationOptions PlaybackNotifications { get; set; } = new();
     public List<KodiInstanceOptions> Instances { get; set; } = [];
 }
 
@@ -38,6 +39,13 @@ public sealed class PvrOptions
     public bool Enabled { get; set; }
 }
 
+public sealed class PlaybackNotificationOptions
+{
+    public bool Enabled { get; set; }
+    public int Capacity { get; set; } = 200;
+    public int ReconnectDelaySeconds { get; set; } = 5;
+}
+
 public sealed class HandleOptions
 {
     public int LifetimeMinutes { get; set; } = 15;
@@ -58,4 +66,5 @@ public sealed class KodiInstanceOptions
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
     public bool AllowInvalidTlsCertificate { get; set; }
+    public string WebSocketEndpoint { get; set; } = string.Empty;
 }

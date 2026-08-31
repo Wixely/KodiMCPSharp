@@ -60,6 +60,50 @@ public sealed class ConfigurationTests
         Assert.True(result.Failed);
     }
 
+    [Theory]
+    [InlineData("http://example.invalid:9090/jsonrpc")]
+    [InlineData("ws://user:synthetic@example.invalid:9090/jsonrpc")]
+    [InlineData("ws://example.invalid:9090/not-rpc")]
+    [InlineData("ws://example.invalid:9090/jsonrpc?token=synthetic")]
+    public void KodiOptions_RejectsUnsafeWebSocketEndpoint(string endpoint)
+    {
+        var result = new KodiOptionsValidator().Validate(null, new KodiOptions
+        {
+            Instances = [new() { Alias = "room", Endpoint = "http://example.invalid/jsonrpc", WebSocketEndpoint = endpoint }],
+        });
+
+        Assert.True(result.Failed);
+    }
+
+    [Fact]
+    public void KodiOptions_RequiresExplicitWebSocketEndpointWhenNotificationsEnabled()
+    {
+        var result = new KodiOptionsValidator().Validate(null, new KodiOptions
+        {
+            PlaybackNotifications = new PlaybackNotificationOptions { Enabled = true },
+            Instances = [new() { Alias = "room", Endpoint = "http://example.invalid/jsonrpc" }],
+        });
+
+        Assert.True(result.Failed);
+    }
+
+    [Fact]
+    public void KodiOptions_AcceptsExplicitSafeWebSocketEndpoint()
+    {
+        var result = new KodiOptionsValidator().Validate(null, new KodiOptions
+        {
+            PlaybackNotifications = new PlaybackNotificationOptions { Enabled = true },
+            Instances = [new()
+            {
+                Alias = "room",
+                Endpoint = "https://example.invalid/jsonrpc",
+                WebSocketEndpoint = "wss://example.invalid:9090/jsonrpc",
+            }],
+        });
+
+        Assert.True(result.Succeeded);
+    }
+
     [Fact]
     public void ServerOptions_RequiresPasswordBeyondLoopback()
     {

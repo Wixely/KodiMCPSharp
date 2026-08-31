@@ -4,7 +4,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 58080,
     [ValidateRange(1, 1000)]
-    [int]$ExpectedToolCount = 53,
+    [int]$ExpectedToolCount = 54,
     [switch]$ProbeAddons,
     [switch]$AllowLocalConfiguration,
     [ValidateRange(0, 3)]
@@ -31,7 +31,8 @@ param(
     [switch]$ProbeVideoMetadata,
     [switch]$ProbeMusicHistory,
     [switch]$ProbeRouteHealth,
-    [switch]$ProbePvr
+    [switch]$ProbePvr,
+    [switch]$ProbePlaybackNotifications
 )
 
 $ErrorActionPreference = 'Stop'
@@ -128,6 +129,7 @@ try {
     if (-not ($tools | Where-Object name -eq 'kodi_list_pvr_recordings')) { throw 'Packaged server is missing kodi_list_pvr_recordings.' }
     if (-not ($tools | Where-Object name -eq 'kodi_list_pvr_timers')) { throw 'Packaged server is missing kodi_list_pvr_timers.' }
     if (-not ($tools | Where-Object name -eq 'kodi_play_pvr')) { throw 'Packaged server is missing kodi_play_pvr.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_list_playback_events')) { throw 'Packaged server is missing kodi_list_playback_events.' }
     $localConfigurationIncluded = Test-Path (Join-Path $publishDirectory 'KodiMCPSharp.Local.json')
     if ($localConfigurationIncluded -and -not $AllowLocalConfiguration) { throw 'Private local configuration was included in the package.' }
 
@@ -492,6 +494,18 @@ try {
         $summary.PvrChannelTotal = $pvrChannels.total
         $summary.PvrRecordingTotal = $pvrRecordings.total
         $summary.PvrTimerTotal = $pvrTimers.total
+    }
+    if ($ProbePlaybackNotifications) {
+        if ($health.configuredInstances -lt 1) { throw 'Playback notification probing requires a configured instance.' }
+        $notificationResult = $null
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            $notificationResult = Invoke-SmokeTool (160 + $attempt) 'kodi_list_playback_events' @{ limit = 10 }
+            if ($notificationResult.connection.connected) { break }
+            Start-Sleep -Milliseconds 250
+        }
+        $summary.PlaybackNotificationsConfigured = $notificationResult.connection.configured
+        $summary.PlaybackNotificationsConnected = $notificationResult.connection.connected
+        $summary.PlaybackNotificationCount = $notificationResult.returned
     }
 
     [pscustomobject]$summary
