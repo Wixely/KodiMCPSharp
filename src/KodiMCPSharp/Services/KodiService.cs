@@ -15,12 +15,24 @@ public sealed partial class KodiService
     private const int MaximumEpisodesPerTvShow = 2000;
     private const int EpisodeReadPageSize = 200;
     private const int MaximumRecentlyWatchedEpisodes = 500;
+    private static readonly string[] MovieDetailProperties =
+    [
+        "title", "originaltitle", "year", "genre", "rating", "votes", "plot", "studio", "mpaa", "cast",
+        "playcount", "lastplayed", "dateadded", "tag", "art", "thumbnail", "director", "writer", "runtime",
+        "tagline", "premiered", "set", "resume", "file",
+    ];
+    private static readonly string[] TvShowDetailProperties =
+    [
+        "title", "originaltitle", "year", "genre", "rating", "votes", "plot", "studio", "mpaa", "cast",
+        "playcount", "lastplayed", "dateadded", "tag", "art", "thumbnail", "runtime", "premiered", "status",
+        "episode", "watchedepisodes", "season",
+    ];
     private static readonly string[] ReadTools =
     [
         "kodi_list_instances", "kodi_get_capabilities", "kodi_get_status",
         "kodi_search_library", "kodi_list_genres", "kodi_list_recent", "kodi_list_continue_watching",
         "kodi_list_recently_watched_movies", "kodi_list_recently_watched_shows",
-        "kodi_list_up_next",
+        "kodi_list_up_next", "kodi_list_movie_sets", "kodi_browse_movie_set", "kodi_list_video_tags", "kodi_get_video_details",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
         "kodi_get_queue",
@@ -779,6 +791,173 @@ public sealed partial class KodiService
                 : [];
             var limits = GetLimits(result, start, genres.Length);
             return new GenrePageSummary(instance.Alias, descriptor.Domain, limits.Start, limits.End, limits.Total, genres);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<VideoTagPageSummary> ListVideoTagsAsync(
+        string? alias,
+        string domain,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var normalizedDomain = domain.Trim().ToLowerInvariant();
+        var videoType = normalizedDomain switch
+        {
+            "movies" => "movie",
+            "tvshows" => "tvshow",
+            "musicvideos" => "musicvideo",
+            _ => throw new McpException("Video-tag domain must be movies, tvshows, or musicvideos."),
+        };
+        var instance = _registry.Resolve(alias);
+        var (start, end) = Bounds(page, pageSize);
+        try
+        {
+            var result = await instance.Client.CallAsync("VideoLibrary.GetTags", writer =>
+            {
+                writer.WriteString("type", videoType);
+                WriteStringArray(writer, "properties", ["title"]);
+                WriteLimits(writer, start, end);
+                WriteSort(writer);
+            }, cancellationToken);
+            var tags = GetArray(result, "tags")
+                .Select(item => new VideoTagSummary(_safeText.Clean(GetString(item, "title") ?? GetString(item, "label"), 100)))
+                .Where(item => item.Name is not null)
+                .ToArray();
+            var limits = GetLimits(result, start, tags.Length);
+            return new VideoTagPageSummary(instance.Alias, normalizedDomain, limits.Start, limits.End, limits.Total, tags);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<MovieSetPageSummary> ListMovieSetsAsync(
+        string? alias,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var instance = _registry.Resolve(alias);
+        var (start, end) = Bounds(page, pageSize);
+        try
+        {
+            var result = await instance.Client.CallAsync("VideoLibrary.GetMovieSets", writer =>
+            {
+                WriteStringArray(writer, "properties", ["title", "plot", "playcount", "art", "thumbnail"]);
+                WriteLimits(writer, start, end);
+                WriteSort(writer);
+            }, cancellationToken);
+            var sets = GetArray(result, "sets")
+                .Where(item => GetInt(item, "setid") is > 0)
+                .Select(item => new MovieSetSummary(
+                    _safeText.Clean(GetString(item, "title") ?? GetString(item, "label")),
+                    _safeText.Clean(GetString(item, "plot"), 2000),
+                    GetInt(item, "playcount"),
+                    HasArtwork(item),
+                    _handles.Create(instance.Alias,
+                        GetInt(item, "setid")!.Value.ToString(CultureInfo.InvariantCulture),
+                        "video", "movieset", HandleAction.MovieSetBrowse)))
+                .ToArray();
+            var limits = GetLimits(result, start, sets.Length);
+            return new MovieSetPageSummary(instance.Alias, limits.Start, limits.End, limits.Total, sets);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<PageSummary> BrowseMovieSetAsync(
+        string? alias,
+        string handle,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var instance = _registry.Resolve(alias);
+        var entry = _handles.Resolve(handle, instance.Alias, HandleAction.MovieSetBrowse);
+        if (entry.Kind != "movieset" || !int.TryParse(entry.Target, NumberStyles.None, CultureInfo.InvariantCulture, out var setId) || setId < 1)
+            throw new McpException("The handle is not a movie-set handle.");
+        var (start, end) = Bounds(page, pageSize);
+        try
+        {
+            var result = await instance.Client.CallAsync("VideoLibrary.GetMovieSetDetails", writer =>
+            {
+                writer.WriteNumber("setid", setId);
+                writer.WritePropertyName("movies");
+                writer.WriteStartObject();
+                WriteStringArray(writer, "properties", ["title", "year", "genre", "runtime", "playcount", "resume", "file", "art", "thumbnail"]);
+                WriteLimits(writer, start, end);
+                WriteSort(writer);
+                writer.WriteEndObject();
+            }, cancellationToken);
+            if (!result.TryGetProperty("setdetails", out var details) || details.ValueKind != JsonValueKind.Object)
+                throw new McpException("Kodi did not return movie-set details.");
+            return ParseItemPage(instance.Alias, details, "movies", "video", start);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<VideoTitleDetails> GetVideoDetailsAsync(
+        string? alias,
+        string domain,
+        string title,
+        int? year,
+        CancellationToken cancellationToken)
+    {
+        var normalizedDomain = domain.Trim().ToLowerInvariant();
+        var descriptor = normalizedDomain switch
+        {
+            "movies" => (Method: "VideoLibrary.GetMovies", Property: "movies", Context: "movies"),
+            "tvshows" => (Method: "VideoLibrary.GetTVShows", Property: "tvshows", Context: "tvshows"),
+            _ => throw new McpException("Video-details domain must be movies or tvshows."),
+        };
+        var normalizedTitle = NormalizeSearchText(title, "Title", 200)
+            ?? throw new McpException("Title is required.");
+        if (year is < 1 or > 9999) throw new McpException("Year must be between 1 and 9999.");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var result = await instance.Client.CallAsync(descriptor.Method, writer =>
+            {
+                var properties = normalizedDomain == "movies" ? MovieDetailProperties : TvShowDetailProperties;
+                WriteStringArray(writer, "properties", properties);
+                var filters = new List<SearchFilterRule> { new("title", "is", normalizedTitle) };
+                if (year is not null) filters.Add(new("year", "is", year.Value.ToString(CultureInfo.InvariantCulture)));
+                WriteSearchFilter(writer, filters);
+                WriteLimits(writer, 0, 2);
+                WriteSort(writer);
+            }, cancellationToken);
+            var matches = GetArray(result, descriptor.Property);
+            if (matches.Length == 0) throw new McpException($"No {normalizedDomain} title exactly matched '{normalizedTitle}'.");
+            if (matches.Length > 1) throw new McpException($"More than one {normalizedDomain} title matched '{normalizedTitle}'; provide a year.");
+            var item = matches[0];
+            return new VideoTitleDetails(
+                instance.Alias,
+                normalizedDomain,
+                ParseItem(instance.Alias, item, "video", descriptor.Context),
+                _safeText.Clean(GetString(item, "originaltitle")),
+                _safeText.Clean(GetString(item, "plot"), 4000),
+                _safeText.Clean(GetString(item, "tagline"), 500),
+                _safeText.Clean(GetString(item, "premiered"), 50),
+                _safeText.Clean(GetString(item, "status"), 100),
+                _safeText.Clean(GetString(item, "mpaa"), 100),
+                GetDouble(item, "rating"),
+                _safeText.Clean(GetString(item, "votes"), 50),
+                SafeStringArray(item, "studio"),
+                SafeStringArray(item, "director"),
+                SafeStringArray(item, "writer"),
+                SafeStringArray(item, "tag"),
+                SafeCast(item));
         }
         catch (KodiRpcException exception)
         {
@@ -3018,6 +3197,33 @@ public sealed partial class KodiService
         if (major is null) return null;
         return string.Join('.', major, GetInt(value, "minor") ?? 0, GetInt(value, "patch") ?? 0);
     }
+
+    private string[] SafeStringArray(JsonElement source, string property) =>
+        source.ValueKind == JsonValueKind.Object && source.TryGetProperty(property, out var values) && values.ValueKind == JsonValueKind.Array
+            ? values.EnumerateArray()
+                .Where(value => value.ValueKind == JsonValueKind.String)
+                .Select(value => _safeText.Clean(value.GetString(), 200))
+                .Where(value => value is not null)
+                .Cast<string>()
+                .Take(100)
+                .ToArray()
+            : [];
+
+    private CastMemberSummary[] SafeCast(JsonElement source) =>
+        source.ValueKind == JsonValueKind.Object && source.TryGetProperty("cast", out var values) && values.ValueKind == JsonValueKind.Array
+            ? values.EnumerateArray()
+                .Take(50)
+                .Select(value => new CastMemberSummary(
+                    _safeText.Clean(GetString(value, "name"), 200),
+                    _safeText.Clean(GetString(value, "role"), 200),
+                    GetInt(value, "order")))
+                .Where(value => value.Name is not null)
+                .ToArray()
+            : [];
+
+    private static bool HasArtwork(JsonElement item) =>
+        (item.TryGetProperty("thumbnail", out var thumbnail) && thumbnail.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(thumbnail.GetString())) ||
+        (item.TryGetProperty("art", out var art) && art.ValueKind == JsonValueKind.Object && art.EnumerateObject().Any());
 
     private static string? GetString(JsonElement value, string property) =>
         value.ValueKind == JsonValueKind.Object && value.TryGetProperty(property, out var result) && result.ValueKind == JsonValueKind.String ? result.GetString() : null;

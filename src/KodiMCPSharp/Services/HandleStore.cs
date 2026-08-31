@@ -17,6 +17,7 @@ public enum HandleAction
     SetWatchState = 32,
     AddFavourite = 64,
     RemoveFavourite = 128,
+    MovieSetBrowse = 256,
 }
 
 public sealed record FavouriteDescriptor(

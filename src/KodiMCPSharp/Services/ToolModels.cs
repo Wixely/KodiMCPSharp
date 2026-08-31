@@ -136,6 +136,50 @@ public sealed record GenrePageSummary(
     int Total,
     IReadOnlyList<GenreSummary> Genres);
 
+public sealed record VideoTagSummary(string? Name);
+
+public sealed record VideoTagPageSummary(
+    string Alias,
+    string Domain,
+    int Start,
+    int End,
+    int Total,
+    IReadOnlyList<VideoTagSummary> Tags);
+
+public sealed record MovieSetSummary(
+    string? Title,
+    string? Plot,
+    int? PlayCount,
+    bool HasArtwork,
+    string Handle);
+
+public sealed record MovieSetPageSummary(
+    string Alias,
+    int Start,
+    int End,
+    int Total,
+    IReadOnlyList<MovieSetSummary> Sets);
+
+public sealed record CastMemberSummary(string? Name, string? Role, int? Order);
+
+public sealed record VideoTitleDetails(
+    string Alias,
+    string Domain,
+    MediaItemSummary Item,
+    string? OriginalTitle,
+    string? Plot,
+    string? Tagline,
+    string? Premiered,
+    string? Status,
+    string? ContentRating,
+    double? Rating,
+    string? Votes,
+    string[] Studios,
+    string[] Directors,
+    string[] Writers,
+    string[] Tags,
+    IReadOnlyList<CastMemberSummary> Cast);
+
 public sealed record PageSummary(
     string Alias,
     int Start,

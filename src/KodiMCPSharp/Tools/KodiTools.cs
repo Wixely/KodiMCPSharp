@@ -58,6 +58,49 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.ListGenresAsync(alias, domain, page, pageSize, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_list_video_tags"),
+     Description("List bounded video-library tag names for movies, TV shows, or music videos.")]
+    public static async Task<string> ListVideoTags(
+        KodiService service,
+        [Description("Closed tag domain: movies, tvshows, or musicvideos.")] string domain = "movies",
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListVideoTagsAsync(alias, domain, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_list_movie_sets"),
+     Description("List bounded movie collections with safe summaries and opaque browse handles.")]
+    public static async Task<string> ListMovieSets(
+        KodiService service,
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListMovieSetsAsync(alias, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_browse_movie_set"),
+     Description("Browse an opaque movie-set handle into bounded playable movie summaries.")]
+    public static async Task<string> BrowseMovieSet(
+        KodiService service,
+        [Description("Opaque movie-set handle returned by kodi_list_movie_sets.")] string handle,
+        [Description("Zero-based result page.")] int page = 0,
+        [Description("Requested items per page; clamped to the configured maximum.")] int pageSize = 25,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.BrowseMovieSetAsync(alias, handle, page, pageSize, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_get_video_details"),
+     Description("Get rich metadata for one exact library movie or TV-show title in one call, rejecting ambiguous matches unless a year disambiguates them.")]
+    public static async Task<string> GetVideoDetails(
+        KodiService service,
+        [Description("Closed details domain: movies or tvshows.")] string domain,
+        [Description("Exact movie or TV-show title, 1-200 printable characters.")] string title,
+        [Description("Optional exact release year from 1 to 9999.")] int? year = null,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.GetVideoDetailsAsync(alias, domain, title, year, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_list_recent"),
      Description("List recently added movies, episodes, albums, or songs with bounded safe metadata and playable handles where available.")]
     public static async Task<string> ListRecent(

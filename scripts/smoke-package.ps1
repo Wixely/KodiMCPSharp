@@ -4,7 +4,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 58080,
     [ValidateRange(1, 1000)]
-    [int]$ExpectedToolCount = 41,
+    [int]$ExpectedToolCount = 45,
     [switch]$ProbeAddons,
     [switch]$AllowLocalConfiguration,
     [ValidateRange(0, 3)]
@@ -27,7 +27,8 @@ param(
     [string]$ExistingRouteTestValue = '',
     [switch]$ForgetExistingRoute,
     [switch]$ProbeQueues,
-    [switch]$ProbeUpNext
+    [switch]$ProbeUpNext,
+    [switch]$ProbeVideoMetadata
 )
 
 $ErrorActionPreference = 'Stop'
@@ -58,6 +59,17 @@ try {
     $headers = @{
         Accept = 'application/json, text/event-stream'
         'MCP-Protocol-Version' = '2025-06-18'
+    }
+    function Invoke-SmokeTool([int]$Id, [string]$Name, [hashtable]$Arguments) {
+        $call = @{ jsonrpc = '2.0'; id = $Id; method = 'tools/call'; params = @{ name = $Name; arguments = $Arguments } } |
+            ConvertTo-Json -Depth 8 -Compress
+        $response = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/mcp" `
+            -Method Post -ContentType 'application/json' -Headers $headers -Body $call -TimeoutSec 30
+        $responseDataLine = $response.Content -split "`n" | Where-Object { $_ -like 'data:*' } | Select-Object -Last 1
+        $responseJson = if ($responseDataLine) { $responseDataLine.Substring(5).Trim() } else { $response.Content }
+        $responsePayload = $responseJson | ConvertFrom-Json
+        if ($responsePayload.error -or $responsePayload.result.isError) { throw "$Name failed." }
+        return $responsePayload.result.content[0].text | ConvertFrom-Json
     }
     $initialize = @{
         jsonrpc = '2.0'
@@ -101,6 +113,10 @@ try {
     if (-not ($tools | Where-Object name -eq 'kodi_move_queue_item')) { throw 'Packaged server is missing kodi_move_queue_item.' }
     if (-not ($tools | Where-Object name -eq 'kodi_list_up_next')) { throw 'Packaged server is missing kodi_list_up_next.' }
     if (-not ($tools | Where-Object name -eq 'kodi_play_random')) { throw 'Packaged server is missing kodi_play_random.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_list_movie_sets')) { throw 'Packaged server is missing kodi_list_movie_sets.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_browse_movie_set')) { throw 'Packaged server is missing kodi_browse_movie_set.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_list_video_tags')) { throw 'Packaged server is missing kodi_list_video_tags.' }
+    if (-not ($tools | Where-Object name -eq 'kodi_get_video_details')) { throw 'Packaged server is missing kodi_get_video_details.' }
     $localConfigurationIncluded = Test-Path (Join-Path $publishDirectory 'KodiMCPSharp.Local.json')
     if ($localConfigurationIncluded -and -not $AllowLocalConfiguration) { throw 'Private local configuration was included in the package.' }
 
@@ -422,6 +438,26 @@ try {
         $upNextResult = $upNextPayload.result.content[0].text | ConvertFrom-Json
         $summary.UpNextReturned = $upNextResult.returned
         $summary.UpNextScannedEpisodes = $upNextResult.scannedEpisodes
+    }
+    if ($ProbeVideoMetadata) {
+        if ($health.configuredInstances -lt 1) { throw 'Video metadata probing requires a configured instance.' }
+        $tagResult = Invoke-SmokeTool 120 'kodi_list_video_tags' @{ domain = 'movies'; page = 0; pageSize = 10 }
+        $setResult = Invoke-SmokeTool 121 'kodi_list_movie_sets' @{ page = 0; pageSize = 10 }
+        $summary.VideoTagTotal = $tagResult.total
+        $summary.MovieSetTotal = $setResult.total
+        $summary.MovieSetBrowseReturned = 0
+        if (@($setResult.sets).Count -gt 0) {
+            $setMovies = Invoke-SmokeTool 122 'kodi_browse_movie_set' @{ handle = $setResult.sets[0].handle; page = 0; pageSize = 10 }
+            $summary.MovieSetBrowseReturned = @($setMovies.items).Count
+        }
+        $recentMovies = Invoke-SmokeTool 123 'kodi_list_recent' @{ domain = 'movies'; page = 0; pageSize = 1 }
+        $summary.VideoDetailsObserved = $false
+        if (@($recentMovies.items).Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($recentMovies.items[0].label)) {
+            $detailArguments = @{ domain = 'movies'; title = $recentMovies.items[0].label }
+            if ($null -ne $recentMovies.items[0].year) { $detailArguments.year = $recentMovies.items[0].year }
+            $videoDetails = Invoke-SmokeTool 124 'kodi_get_video_details' $detailArguments
+            $summary.VideoDetailsObserved = ($videoDetails.domain -eq 'movies')
+        }
     }
 
     [pscustomobject]$summary

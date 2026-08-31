@@ -473,6 +473,86 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task VideoTags_MapClosedDomainAndReturnSafeNames()
+    {
+        string? requestedType = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetTags" => CaptureParameters(write,
+                root => requestedType = root.GetProperty("type").GetString(),
+                """{"limits":{"start":0,"end":1,"total":1},"tags":[{"title":"Featured"}]}"""),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.ListVideoTagsAsync("room", "tvshows", 0, 25, TestContext.Current.CancellationToken);
+
+        Assert.Equal("tvshow", requestedType);
+        Assert.Equal("Featured", Assert.Single(result.Tags).Name);
+    }
+
+    [Fact]
+    public async Task MovieSets_ReturnOpaqueBrowseHandleAndPlayableMovies()
+    {
+        const string target = "synthetic-set-movie";
+        int? requestedSetId = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetMovieSets" => Element("""
+                {"limits":{"start":0,"end":1,"total":1},"sets":[{"setid":42,"title":"Synthetic Collection","plot":"Plot"}]}
+                """),
+            "VideoLibrary.GetMovieSetDetails" => CaptureParameters(write, root =>
+            {
+                requestedSetId = root.GetProperty("setid").GetInt32();
+                Assert.True(root.TryGetProperty("movies", out _));
+            }, $$$"""
+                {"setdetails":{"limits":{"start":0,"end":1,"total":1},"movies":[{"movieid":7,"label":"Synthetic Movie","type":"movie","file":"{{{target}}}"}]}}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var sets = await service.ListMovieSetsAsync("room", 0, 25, TestContext.Current.CancellationToken);
+        var movies = await service.BrowseMovieSetAsync("room", Assert.Single(sets.Sets).Handle, 0, 25,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(42, requestedSetId);
+        Assert.Contains("play", Assert.Single(movies.Items).AvailableActions);
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(movies), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task VideoDetails_ReturnRichSafeMetadataAndRejectPaths()
+    {
+        const string target = "synthetic-detailed-movie";
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetMovies" => CaptureParameters(write, root =>
+            {
+                Assert.Equal(2, root.GetProperty("limits").GetProperty("end").GetInt32());
+                Assert.Equal("title", root.GetProperty("filter").GetProperty("and")[0].GetProperty("field").GetString());
+            }, $$$"""
+                {"limits":{"start":0,"end":1,"total":1},"movies":[{
+                  "movieid":7,"label":"Synthetic Movie","originaltitle":"Original","year":2025,
+                  "plot":"Plot","tagline":"Tagline","rating":8.5,"votes":"123","studio":["Studio"],
+                  "director":["Director"],"writer":["Writer"],"tag":["Featured"],
+                  "cast":[{"name":"Actor","role":"Role","order":0}],"type":"movie","file":"{{{target}}}"
+                }]}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.GetVideoDetailsAsync("room", "movies", "Synthetic Movie", 2025,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(8.5, result.Rating);
+        Assert.Equal("Actor", Assert.Single(result.Cast).Name);
+        Assert.Contains("play", result.Item.AvailableActions);
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RecentMovies_ReturnPlayableOpaqueHandles()
     {
         const string target = "synthetic-recent-target";
