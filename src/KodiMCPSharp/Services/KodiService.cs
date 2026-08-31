@@ -19,7 +19,7 @@ public sealed partial class KodiService
     [
         "kodi_list_instances", "kodi_get_capabilities", "kodi_get_status",
         "kodi_search_library", "kodi_list_genres", "kodi_list_recent", "kodi_list_continue_watching",
-        "kodi_list_recently_watched_shows",
+        "kodi_list_recently_watched_movies", "kodi_list_recently_watched_shows",
         "kodi_browse_tv_show", "kodi_list_favourites", "kodi_search_favourites", "kodi_list_addons", "kodi_browse",
         "kodi_capture_current_addon_page", "kodi_list_addon_routes", "kodi_bind_addon_route",
     ];
@@ -752,6 +752,38 @@ public sealed partial class KodiService
             var limits = GetLimits(result, 0, episodes.Length);
             return new RecentlyWatchedShowResult(
                 instance.Alias, limit, shows.Count, episodes.Length, limits.Total > episodes.Length, shows);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<RecentlyWatchedMovieResult> ListRecentlyWatchedMoviesAsync(
+        string? alias,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (limit is < 1 or > 50) throw new McpException("Limit must be between 1 and 50.");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var result = await instance.Client.CallAsync("VideoLibrary.GetMovies", writer =>
+            {
+                WriteStringArray(writer, "properties", ["title", "year", "lastplayed"]);
+                WriteLimits(writer, 0, limit);
+                WriteSort(writer, "lastplayed", "descending");
+                WriteSearchFilter(writer, [new SearchFilterRule("lastplayed", "after", "1970-01-01")]);
+            }, cancellationToken);
+            var movies = GetArray(result, "movies");
+            var items = movies.Select(movie => new RecentlyWatchedMovieSummary(
+                    _safeText.Clean(ItemTitle(movie)) ?? "[untitled]",
+                    GetInt(movie, "year"),
+                    _safeText.Clean(GetString(movie, "lastplayed"), 50)))
+                .ToArray();
+            var limits = GetLimits(result, 0, movies.Length);
+            return new RecentlyWatchedMovieResult(
+                instance.Alias, limit, items.Length, limits.Total > movies.Length, items);
         }
         catch (KodiRpcException exception)
         {

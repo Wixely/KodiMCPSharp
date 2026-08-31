@@ -89,6 +89,15 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.ListRecentlyWatchedShowsAsync(alias, limit, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_list_recently_watched_movies"),
+     Description("List movies in Kodi last-played order, including release year and Kodi last-played timestamp. This is viewing history, unlike recently-added or continue-watching views.")]
+    public static async Task<string> ListRecentlyWatchedMovies(
+        KodiService service,
+        [Description("Maximum movies to return, from 1 to 50.")] int limit = 10,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ListRecentlyWatchedMoviesAsync(alias, limit, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_browse_tv_show"),
      Description("Browse a TV-show handle into seasons, or a season handle into playable episodes. Only server-issued library handles are accepted.")]
     public static async Task<string> BrowseTvShow(

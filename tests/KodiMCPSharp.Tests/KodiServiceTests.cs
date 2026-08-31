@@ -568,6 +568,50 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task RecentlyWatchedMovies_UsesLastPlayedFilterAndDescendingSort()
+    {
+        int? requestedEnd = null;
+        string? filterField = null;
+        string? filterOperator = null;
+        string? sortMethod = null;
+        string? sortOrder = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetMovies" => CaptureParameters(write, root =>
+            {
+                requestedEnd = root.GetProperty("limits").GetProperty("end").GetInt32();
+                filterField = root.GetProperty("filter").GetProperty("field").GetString();
+                filterOperator = root.GetProperty("filter").GetProperty("operator").GetString();
+                sortMethod = root.GetProperty("sort").GetProperty("method").GetString();
+                sortOrder = root.GetProperty("sort").GetProperty("order").GetString();
+            }, """
+                {"limits":{"start":0,"end":2,"total":4},"movies":[
+                  {"label":"Newest","year":2026,"lastplayed":"2026-08-31 12:00:00"},
+                  {"label":"Older","year":2025,"lastplayed":"2026-08-30 12:00:00"}
+                ]}
+                """),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateService(fake);
+
+        var result = await service.ListRecentlyWatchedMoviesAsync("room", 2, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, requestedEnd);
+        Assert.Equal("lastplayed", filterField);
+        Assert.Equal("after", filterOperator);
+        Assert.Equal("lastplayed", sortMethod);
+        Assert.Equal("descending", sortOrder);
+        Assert.True(result.HasMoreHistory);
+        Assert.Collection(result.Movies,
+            movie =>
+            {
+                Assert.Equal("Newest", movie.Title);
+                Assert.Equal(2026, movie.Year);
+            },
+            movie => Assert.Equal("Older", movie.Title));
+    }
+
+    [Fact]
     public async Task EpisodeResults_ReportExplicitWatchState()
     {
         var fake = new FakeKodiClient((method, _) => method switch
