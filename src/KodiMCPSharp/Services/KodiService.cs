@@ -76,7 +76,9 @@ public sealed partial class KodiService
             "kodi_select_stream", "kodi_set_playback_mode", "kodi_playlist_add",
             "kodi_playlist_remove", "kodi_playlist_clear", "kodi_show_fullscreen_video",
             "kodi_save_addon_route", "kodi_forget_addon_route", "kodi_set_episode_watch_state",
-            "kodi_bulk_set_episode_watch_state", "kodi_play_next_episode", "kodi_add_favourite", "kodi_remove_favourite",
+            "kodi_bulk_set_episode_watch_state", "kodi_play_movie", "kodi_play_episode", "kodi_play_next_episode",
+            "kodi_resume",
+            "kodi_add_favourite", "kodi_remove_favourite",
         ],
         ControlGates: new Dictionary<string, bool>
         {
@@ -112,32 +114,51 @@ public sealed partial class KodiService
         var entry = _handles.Resolve(handle, instance.Alias, HandleAction.Play);
         try
         {
-            var response = await instance.Client.CallAsync("Player.Open", writer =>
-            {
-                writer.WritePropertyName("item");
-                writer.WriteStartObject();
-                writer.WriteString("file", entry.Target);
-                writer.WriteEndObject();
-            }, cancellationToken);
-            var accepted = response.ValueKind == JsonValueKind.String &&
-                           response.GetString()?.Equals("OK", StringComparison.OrdinalIgnoreCase) == true;
-
-            for (var attempt = 0; attempt < 8; attempt++)
-            {
-                var observation = await ObserveActivePlayerAsync(instance, cancellationToken);
-                if (observation is not null)
-                {
-                    return new PlaybackResult(instance.Alias, "play", accepted, true, "observed-playing", observation.Value.PlayerId, observation.Value.Type, observation.Value.State);
-                }
-                if (attempt < 7) await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
-            }
-
-            return new PlaybackResult(instance.Alias, "play", accepted, false, accepted ? "accepted-not-yet-observed" : "indeterminate", null, null, null);
+            return await OpenTargetAsync(instance, entry.Target, false, "play", cancellationToken);
         }
         catch (KodiRpcException exception)
         {
             throw ToMcpException(instance.Alias, exception);
         }
+    }
+
+    private static async Task<PlaybackResult> OpenTargetAsync(
+        RegisteredKodiInstance instance,
+        string target,
+        bool resume,
+        string requested,
+        CancellationToken cancellationToken)
+    {
+        var response = await instance.Client.CallAsync("Player.Open", writer =>
+        {
+            writer.WritePropertyName("item");
+            writer.WriteStartObject();
+            writer.WriteString("file", target);
+            writer.WriteEndObject();
+            if (resume)
+            {
+                writer.WritePropertyName("options");
+                writer.WriteStartObject();
+                writer.WriteBoolean("resume", true);
+                writer.WriteEndObject();
+            }
+        }, cancellationToken);
+        var accepted = response.ValueKind == JsonValueKind.String &&
+                       response.GetString()?.Equals("OK", StringComparison.OrdinalIgnoreCase) == true;
+
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var observation = await ObserveActivePlayerAsync(instance, cancellationToken);
+            if (observation is not null)
+            {
+                return new PlaybackResult(instance.Alias, requested, accepted, true, "observed-playing",
+                    observation.Value.PlayerId, observation.Value.Type, observation.Value.State);
+            }
+            if (attempt < 7) await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+        }
+
+        return new PlaybackResult(instance.Alias, requested, accepted, false,
+            accepted ? "accepted-not-yet-observed" : "indeterminate", null, null, null);
     }
 
     public async Task<PlayNextEpisodeResult> PlayNextEpisodeAsync(
@@ -172,6 +193,95 @@ public sealed partial class KodiService
                 playback.Outcome,
                 playback.PlayerId,
                 playback.State);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<ResolvedPlaybackResult> PlayMovieAsync(
+        string? alias,
+        string title,
+        int? year,
+        CancellationToken cancellationToken)
+    {
+        var normalizedTitle = NormalizeSearchText(title, "Movie title", 200)
+            ?? throw new McpException("Movie title is required.");
+        if (year is < 1 or > 9999) throw new McpException("Year must be between 1 and 9999.");
+        EnsureControl(_options.Controls.AllowPlayback, "movie playback", "AllowPlayback");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var resolution = await ResolveMovieAsync(instance, normalizedTitle, year, cancellationToken)
+                ?? throw new McpException($"No unambiguous playable movie was found for '{normalizedTitle}' in favourites, the Kodi library, or learned add-on routes.");
+            var handle = _handles.Create(instance.Alias, resolution.Target, "video", "movie", HandleAction.Play,
+                resolution.AddonId, resolution.AddonName);
+            var playback = await PlayItemAsync(instance.Alias, handle, cancellationToken);
+            return new ResolvedPlaybackResult(
+                instance.Alias, normalizedTitle, "movie", resolution.Source, resolution.SelectionBasis,
+                resolution.Label, resolution.Year, null, null, playback.Accepted, playback.Observed,
+                playback.Outcome, playback.PlayerId, playback.State);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<ResolvedPlaybackResult> PlayEpisodeAsync(
+        string? alias,
+        string show,
+        int season,
+        int episode,
+        CancellationToken cancellationToken)
+    {
+        var normalizedShow = NormalizeSearchText(show, "TV show", 200)
+            ?? throw new McpException("TV show is required.");
+        if (season is < 0 or > 1000) throw new McpException("Season must be between 0 and 1000.");
+        if (episode is < 0 or > 10000) throw new McpException("Episode must be between 0 and 10000.");
+        EnsureControl(_options.Controls.AllowPlayback, "episode playback", "AllowPlayback");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var resolution = await ResolveExactEpisodeAsync(instance, normalizedShow, season, episode, cancellationToken)
+                ?? throw new McpException($"No unambiguous playable episode was found for '{normalizedShow}' season {season}, episode {episode} in favourites, the Kodi library, or learned add-on routes.");
+            var handle = _handles.Create(instance.Alias, resolution.Candidate.Target, "video", "episode", HandleAction.Play,
+                resolution.Candidate.AddonId, resolution.Candidate.AddonName);
+            var playback = await PlayItemAsync(instance.Alias, handle, cancellationToken);
+            return new ResolvedPlaybackResult(
+                instance.Alias, normalizedShow, "episode", resolution.Source, resolution.SelectionBasis,
+                resolution.Candidate.Label, null, resolution.Candidate.Season, resolution.Candidate.Episode,
+                playback.Accepted, playback.Observed, playback.Outcome, playback.PlayerId, playback.State);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    public async Task<ResolvedPlaybackResult> ResumeAsync(
+        string? alias,
+        string title,
+        string domain,
+        CancellationToken cancellationToken)
+    {
+        var normalizedTitle = NormalizeSearchText(title, "Title", 200)
+            ?? throw new McpException("Title is required.");
+        var normalizedDomain = domain.Trim().ToLowerInvariant();
+        if (normalizedDomain is not ("auto" or "movies" or "episodes"))
+            throw new McpException("Domain must be auto, movies, or episodes.");
+        EnsureControl(_options.Controls.AllowPlayback, "resume playback", "AllowPlayback");
+        var instance = _registry.Resolve(alias);
+        try
+        {
+            var resolution = await ResolveResumeAsync(instance, normalizedTitle, normalizedDomain, cancellationToken)
+                ?? throw new McpException($"No partially watched {normalizedDomain} title matching '{normalizedTitle}' was found in the Kodi library.");
+            var playback = await OpenTargetAsync(instance, resolution.Target, true, "resume", cancellationToken);
+            return new ResolvedPlaybackResult(
+                instance.Alias, normalizedTitle, resolution.MediaType, "library", "largest-resume-position",
+                resolution.Label, resolution.Year, resolution.Season, resolution.Episode, playback.Accepted,
+                playback.Observed, playback.Outcome, playback.PlayerId, playback.State);
         }
         catch (KodiRpcException exception)
         {
@@ -1118,7 +1228,8 @@ public sealed partial class KodiService
             var result = await instance.Client.CallAsync("Addons.GetAddons", writer =>
             {
                 writer.WriteBoolean("enabled", true);
-                WriteStringArray(writer, "properties", ["name", "version", "summary", "description", "enabled", "type"]);
+                // Kodi 21 rejects "type" in Addon.Fields even though it returns type as a base field.
+                WriteStringArray(writer, "properties", ["name", "version", "summary", "description", "enabled"]);
                 writer.WritePropertyName("limits");
                 writer.WriteStartObject(); writer.WriteNumber("start", start); writer.WriteNumber("end", end); writer.WriteEndObject();
             }, cancellationToken);
@@ -1295,6 +1406,319 @@ public sealed partial class KodiService
             throw ToMcpException(instance.Alias, exception);
         }
     }
+
+    private async Task<MovieResolution?> ResolveMovieAsync(
+        RegisteredKodiInstance instance,
+        string title,
+        int? year,
+        CancellationToken cancellationToken)
+    {
+        if (year is null)
+        {
+            try
+            {
+                var favourites = await instance.Client.CallAsync("Favourites.GetFavourites", writer =>
+                {
+                    writer.WriteString("type", "media");
+                    WriteStringArray(writer, "properties", ["path"]);
+                }, cancellationToken);
+                var matches = GetArray(favourites, "favourites")
+                    .Where(item => FavouriteTitle(item).Contains(title, StringComparison.OrdinalIgnoreCase))
+                    .Where(item => GetString(item, "type") == "media" && IsPlausibleMovieFavouriteTarget(GetString(item, "path")))
+                    .ToArray();
+                var selected = SelectUniqueTitleMatch(matches, title);
+                if (selected is { } favourite)
+                {
+                    var target = GetString(favourite, "path")!;
+                    return new MovieResolution(
+                        "favourite", "unique-title-match", target, _safeText.Clean(FavouriteTitle(favourite)), null,
+                        GetPluginAddonId(target), null);
+                }
+            }
+            catch (KodiRpcException exception) when (exception.Kind == KodiFailureKind.Remote)
+            {
+                // Continue to the library when this Kodi version cannot filter media favourites.
+            }
+        }
+
+        try
+        {
+            var movies = await instance.Client.CallAsync("VideoLibrary.GetMovies", writer =>
+            {
+                WriteStringArray(writer, "properties", ["title", "year", "file"]);
+                var filters = new List<SearchFilterRule> { new("title", "contains", title) };
+                if (year is not null) filters.Add(new("year", "is", year.Value.ToString(CultureInfo.InvariantCulture)));
+                WriteSearchFilter(writer, filters);
+                WriteLimits(writer, 0, 25);
+            }, cancellationToken);
+            var candidates = GetArray(movies, "movies")
+                .Where(item => !string.IsNullOrWhiteSpace(GetString(item, "file")))
+                .Where(item => year is null || GetInt(item, "year") == year)
+                .ToArray();
+            var selected = SelectUniqueTitleMatch(candidates, title);
+            if (selected is { } movie)
+            {
+                var target = GetString(movie, "file")!;
+                return new MovieResolution(
+                    "library", year is null ? "unique-title-match" : "unique-title-year-match", target,
+                    _safeText.Clean(ItemTitle(movie)), GetInt(movie, "year"), GetPluginAddonId(target), null);
+            }
+        }
+        catch (KodiRpcException exception) when (exception.Kind == KodiFailureKind.Remote)
+        {
+            // Continue to a learned add-on search when the video library is unavailable.
+        }
+
+        var routes = await _learnedRoutes.ListAsync(instance.Alias, cancellationToken);
+        foreach (var route in routes.Where(route => route.Parameter is not null &&
+                                                   (route.Actions & HandleAction.Browse) != 0 &&
+                                                   route.Name.Contains("search", StringComparison.OrdinalIgnoreCase) &&
+                                                   route.Name.Contains("movie", StringComparison.OrdinalIgnoreCase)))
+        {
+            var target = route.Target.Replace(
+                FileLearnedRouteStore.InputPlaceholder, Uri.EscapeDataString(title), StringComparison.Ordinal);
+            if (!route.AddonId.Equals(GetPluginAddonId(target), StringComparison.OrdinalIgnoreCase)) continue;
+            var items = await ReadAddonDirectoryAsync(instance, target, cancellationToken);
+            var candidates = items
+                .Where(item => !IsDirectoryItem(item) && !string.IsNullOrWhiteSpace(GetString(item, "file")))
+                .Where(item => ItemTitle(item).Contains(title, StringComparison.OrdinalIgnoreCase))
+                .Where(item => year is null || GetInt(item, "year") == year)
+                .ToArray();
+            var selected = SelectUniqueTitleMatch(candidates, title);
+            if (selected is not { } movie) continue;
+            var movieTarget = GetString(movie, "file")!;
+            if (!route.AddonId.Equals(GetPluginAddonId(movieTarget), StringComparison.OrdinalIgnoreCase)) continue;
+            return new MovieResolution(
+                "learned-addon-route", year is null ? "unique-title-match" : "unique-title-year-match",
+                movieTarget, _safeText.Clean(ItemTitle(movie)), GetInt(movie, "year"), route.AddonId, route.AddonName);
+        }
+        return null;
+    }
+
+    private async Task<ResumeResolution?> ResolveResumeAsync(
+        RegisteredKodiInstance instance,
+        string title,
+        string domain,
+        CancellationToken cancellationToken)
+    {
+        var candidates = new List<ResumeResolution>();
+        if (domain is "auto" or "movies")
+        {
+            var movies = await instance.Client.CallAsync("VideoLibrary.GetMovies", writer =>
+            {
+                WriteStringArray(writer, "properties", ["title", "year", "resume", "file"]);
+                WriteSearchFilter(writer,
+                [
+                    new SearchFilterRule("title", "contains", title),
+                    new SearchFilterRule("inprogress", "true", string.Empty),
+                ]);
+                WriteLimits(writer, 0, 25);
+                WriteSort(writer, "lastplayed", "descending");
+            }, cancellationToken);
+            candidates.AddRange(GetArray(movies, "movies").Select(item => CreateResumeResolution(item, "movie"))
+                .Where(candidate => candidate is not null).Cast<ResumeResolution>());
+        }
+
+        if (domain is "auto" or "episodes")
+        {
+            var episodes = await instance.Client.CallAsync("VideoLibrary.GetEpisodes", writer =>
+            {
+                WriteStringArray(writer, "properties", ["title", "showtitle", "season", "episode", "resume", "file"]);
+                WriteSearchFilter(writer, [new SearchFilterRule("inprogress", "true", string.Empty)]);
+                WriteLimits(writer, 0, 200);
+                WriteSort(writer, "lastplayed", "descending");
+            }, cancellationToken);
+            candidates.AddRange(GetArray(episodes, "episodes")
+                .Where(item => (GetString(item, "showtitle") ?? string.Empty).Contains(title, StringComparison.OrdinalIgnoreCase) ||
+                               ItemTitle(item).Contains(title, StringComparison.OrdinalIgnoreCase))
+                .Select(item => CreateResumeResolution(item, "episode"))
+                .Where(candidate => candidate is not null).Cast<ResumeResolution>());
+        }
+
+        var exact = candidates.Where(candidate => candidate.MatchTitle.Equals(title, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var matches = exact.Length > 0 ? exact : candidates
+            .Where(candidate => candidate.MatchTitle.Contains(title, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return matches.OrderByDescending(candidate => candidate.ResumePosition).FirstOrDefault();
+    }
+
+    private ResumeResolution? CreateResumeResolution(JsonElement item, string mediaType)
+    {
+        var target = GetString(item, "file");
+        var resume = item.TryGetProperty("resume", out var resumeValue) && resumeValue.ValueKind == JsonValueKind.Object
+            ? GetDouble(resumeValue, "position") ?? 0
+            : 0;
+        if (string.IsNullOrWhiteSpace(target) || resume <= 0) return null;
+        var matchTitle = mediaType == "episode" ? GetString(item, "showtitle") ?? ItemTitle(item) : ItemTitle(item);
+        return new ResumeResolution(
+            mediaType, target, matchTitle, _safeText.Clean(ItemTitle(item)), GetInt(item, "year"),
+            GetInt(item, "season"), GetInt(item, "episode"), resume);
+    }
+
+    private async Task<NextEpisodeResolution?> ResolveExactEpisodeAsync(
+        RegisteredKodiInstance instance,
+        string show,
+        int season,
+        int episode,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var favourites = await instance.Client.CallAsync("Favourites.GetFavourites", writer =>
+            {
+                writer.WriteString("type", "window");
+                WriteStringArray(writer, "properties", ["window", "windowparameter"]);
+            }, cancellationToken);
+            var matchingFavourites = GetArray(favourites, "favourites")
+                .Where(item => FavouriteTitle(item).Contains(show, StringComparison.OrdinalIgnoreCase))
+                .Where(IsSafeFavouriteVideoWindow)
+                .Where(item => GetPluginAddonId(GetString(item, "windowparameter") ?? string.Empty) is not null)
+                .ToArray();
+            var selectedFavourite = SelectUniqueTitleMatch(matchingFavourites, show);
+            if (selectedFavourite is { } favourite)
+            {
+                var target = GetString(favourite, "windowparameter");
+                var addonId = target is null ? null : GetPluginAddonId(target);
+                if (target is not null && addonId is not null)
+                {
+                    var firstLevel = await ReadAddonDirectoryAsync(instance, target, cancellationToken);
+                    var candidate = SelectExactEpisode(firstLevel, season, episode, addonId, FavouriteTitle(favourite));
+                    if (candidate is not null) return new NextEpisodeResolution("favourite", "exact-season-episode", candidate);
+                    foreach (var folder in firstLevel.Where(IsDirectoryItem).Take(12))
+                    {
+                        var folderTarget = GetString(folder, "file");
+                        if (folderTarget is null || !addonId.Equals(GetPluginAddonId(folderTarget), StringComparison.OrdinalIgnoreCase)) continue;
+                        candidate = SelectExactEpisode(
+                            await ReadAddonDirectoryAsync(instance, folderTarget, cancellationToken),
+                            season, episode, addonId, FavouriteTitle(favourite));
+                        if (candidate is not null) return new NextEpisodeResolution("favourite", "exact-season-episode", candidate);
+                    }
+                }
+            }
+        }
+        catch (KodiRpcException exception) when (exception.Kind == KodiFailureKind.Remote)
+        {
+            // Continue to the library.
+        }
+
+        try
+        {
+            var shows = await instance.Client.CallAsync("VideoLibrary.GetTVShows", writer =>
+            {
+                WriteStringArray(writer, "properties", ["title"]);
+                WriteSearchFilter(writer, [new SearchFilterRule("title", "contains", show)]);
+                WriteLimits(writer, 0, 25);
+            }, cancellationToken);
+            var selectedShow = SelectUniqueTitleMatch(
+                GetArray(shows, "tvshows").Where(item => GetInt(item, "tvshowid") is not null).ToArray(), show);
+            if (selectedShow is { } showItem && GetInt(showItem, "tvshowid") is { } tvShowId)
+            {
+                var episodes = await instance.Client.CallAsync("VideoLibrary.GetEpisodes", writer =>
+                {
+                    writer.WriteNumber("tvshowid", tvShowId);
+                    writer.WriteNumber("season", season);
+                    WriteStringArray(writer, "properties", ["title", "season", "episode", "file", "playcount", "resume"]);
+                    WriteLimits(writer, 0, MaximumEpisodesPerTvShow);
+                }, cancellationToken);
+                var candidate = SelectExactEpisode(GetArray(episodes, "episodes"), season, episode, null, null);
+                if (candidate is not null) return new NextEpisodeResolution("library", "exact-season-episode", candidate);
+            }
+        }
+        catch (KodiRpcException exception) when (exception.Kind == KodiFailureKind.Remote)
+        {
+            // Continue to learned add-on routes.
+        }
+
+        var routes = await _learnedRoutes.ListAsync(instance.Alias, cancellationToken);
+        foreach (var route in routes.Where(route => route.Parameter is not null &&
+                                                   (route.Actions & HandleAction.Browse) != 0 &&
+                                                   route.Name.Contains("search", StringComparison.OrdinalIgnoreCase) &&
+                                                   (route.Name.Contains("tv", StringComparison.OrdinalIgnoreCase) ||
+                                                    route.Name.Contains("show", StringComparison.OrdinalIgnoreCase))))
+        {
+            var target = route.Target.Replace(
+                FileLearnedRouteStore.InputPlaceholder, Uri.EscapeDataString(show), StringComparison.Ordinal);
+            if (!route.AddonId.Equals(GetPluginAddonId(target), StringComparison.OrdinalIgnoreCase)) continue;
+            var searchItems = await ReadAddonDirectoryAsync(instance, target, cancellationToken);
+            var showItem = SelectUniqueTitleMatch(
+                searchItems.Where(IsDirectoryItem).Where(item => ItemTitle(item).Contains(show, StringComparison.OrdinalIgnoreCase)).ToArray(), show);
+            var showTarget = showItem is null ? null : GetString(showItem.Value, "file");
+            if (showTarget is null || !route.AddonId.Equals(GetPluginAddonId(showTarget), StringComparison.OrdinalIgnoreCase)) continue;
+            var firstLevel = await ReadAddonDirectoryAsync(instance, showTarget, cancellationToken);
+            var candidate = SelectExactEpisode(firstLevel, season, episode, route.AddonId, route.AddonName);
+            if (candidate is not null)
+                return new NextEpisodeResolution("learned-addon-route", "exact-season-episode", candidate);
+            foreach (var folder in firstLevel.Where(IsDirectoryItem).Take(12))
+            {
+                var folderTarget = GetString(folder, "file");
+                if (folderTarget is null || !route.AddonId.Equals(GetPluginAddonId(folderTarget), StringComparison.OrdinalIgnoreCase)) continue;
+                candidate = SelectExactEpisode(
+                    await ReadAddonDirectoryAsync(instance, folderTarget, cancellationToken),
+                    season, episode, route.AddonId, route.AddonName);
+                if (candidate is not null)
+                    return new NextEpisodeResolution("learned-addon-route", "exact-season-episode", candidate);
+            }
+        }
+        return null;
+    }
+
+    private EpisodeCandidate? SelectExactEpisode(
+        IEnumerable<JsonElement> items,
+        int season,
+        int episode,
+        string? addonId,
+        string? addonName)
+    {
+        var matches = items.Select((item, index) => CreateEpisodeCandidate(item, index, addonId, addonName))
+            .Where(candidate => candidate is not null && candidate.Season == season && candidate.Episode == episode)
+            .Cast<EpisodeCandidate>()
+            .ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private static JsonElement? SelectUniqueTitleMatch(IReadOnlyList<JsonElement> items, string title)
+    {
+        var exact = items.Where(item => ItemTitle(item).Equals(title, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (exact.Length == 1) return exact[0];
+        if (exact.Length > 1) return null;
+        var contains = items.Where(item => ItemTitle(item).Contains(title, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return contains.Length == 1 ? contains[0] : null;
+    }
+
+    private static bool IsPlausibleMovieFavouriteTarget(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target)) return false;
+        if (Uri.TryCreate(target, UriKind.Absolute, out var uri))
+        {
+            if (uri.Scheme.Equals("videodb", StringComparison.OrdinalIgnoreCase) &&
+                uri.Host.Equals("movies", StringComparison.OrdinalIgnoreCase)) return true;
+            if (uri.Scheme.Equals("plugin", StringComparison.OrdinalIgnoreCase) &&
+                uri.Host.StartsWith("plugin.video.", StringComparison.OrdinalIgnoreCase)) return true;
+            target = uri.AbsolutePath;
+        }
+        var extension = Path.GetExtension(target);
+        return extension.ToLowerInvariant() is
+            ".3g2" or ".3gp" or ".asf" or ".avi" or ".flv" or ".m2ts" or ".m4v" or ".mkv" or
+            ".mov" or ".mp4" or ".mpeg" or ".mpg" or ".mts" or ".strm" or ".ts" or ".vob" or ".webm" or ".wmv";
+    }
+
+    private sealed record MovieResolution(
+        string Source,
+        string SelectionBasis,
+        string Target,
+        string? Label,
+        int? Year,
+        string? AddonId,
+        string? AddonName);
+
+    private sealed record ResumeResolution(
+        string MediaType,
+        string Target,
+        string MatchTitle,
+        string? Label,
+        int? Year,
+        int? Season,
+        int? Episode,
+        double ResumePosition);
 
     private async Task<NextEpisodeResolution?> ResolveNextEpisodeAsync(
         RegisteredKodiInstance instance,

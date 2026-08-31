@@ -36,9 +36,11 @@ public sealed class KodiServiceTests
     public async Task AddonBrowse_UsesServerIssuedHandleWithoutExposingPluginPath()
     {
         string? receivedDirectory = null;
+        var requestedTypeProperty = false;
         var fake = new FakeKodiClient((method, write) => method switch
         {
-            "Addons.GetAddons" => Element("""
+            "Addons.GetAddons" => CaptureParameters(write, root => requestedTypeProperty = root.GetProperty("properties")
+                .EnumerateArray().Any(value => value.GetString() == "type"), """
                 {"limits":{"start":0,"end":1,"total":1},"addons":[{"addonid":"plugin.video.synthetic","name":"Synthetic","type":"xbmc.python.pluginsource","enabled":true}]}
                 """),
             "Files.GetDirectory" => CaptureDirectory(write, value => receivedDirectory = value),
@@ -50,6 +52,7 @@ public sealed class KodiServiceTests
         var result = await service.BrowseAsync("room", addons.Addons.Single().Handle, "video", 0, 25, TestContext.Current.CancellationToken);
 
         Assert.Equal("plugin://plugin.video.synthetic/", receivedDirectory);
+        Assert.False(requestedTypeProperty);
         Assert.DoesNotContain("plugin://", JsonSerializer.Serialize(addons), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("plugin://", JsonSerializer.Serialize(result), StringComparison.OrdinalIgnoreCase);
     }
@@ -968,6 +971,208 @@ public sealed class KodiServiceTests
         Assert.Equal("learned-addon-route", result.Source);
         Assert.Equal(episodeTarget, openedTarget);
         Assert.Equal(2, directoryReads);
+    }
+
+    [Fact]
+    public async Task PlayMovie_PrefersUniqueMediaFavouriteWhenYearIsOmitted()
+    {
+        const string target = "synthetic-favourite-movie.mkv";
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Favourites.GetFavourites" => Element($$$"""
+                {"favourites":[{"title":"Example Film","type":"media","path":"{{{target}}}"}]}
+                """),
+            "Player.Open" => CaptureParameters(write, root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayMovieAsync("room", "Example Film", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal("favourite", result.Source);
+        Assert.Equal(target, openedTarget);
+        Assert.True(result.Observed);
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PlayMovie_WithYearUsesUniqueLibraryMatch()
+    {
+        const string target = "synthetic-library-movie";
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetMovies" => Element($$$"""
+                {"movies":[{"label":"Example Film","year":2025,"file":"{{{target}}}"}]}
+                """),
+            "Player.Open" => CaptureParameters(write, root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayMovieAsync("room", "Example Film", 2025, TestContext.Current.CancellationToken);
+
+        Assert.Equal("library", result.Source);
+        Assert.Equal(2025, result.Year);
+        Assert.Equal(target, openedTarget);
+    }
+
+    [Fact]
+    public async Task PlayMovie_DoesNotTreatAudioFavouriteAsMovie()
+    {
+        const string movieTarget = "synthetic-library-movie.mkv";
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Favourites.GetFavourites" => Element("{\"favourites\":[{\"title\":\"Example Film\",\"type\":\"media\",\"path\":\"synthetic-audio.mp3\"}]}"),
+            "VideoLibrary.GetMovies" => Element($$$"""{"movies":[{"label":"Example Film","year":2025,"file":"{{{movieTarget}}}"}]}"""),
+            "Player.Open" => CaptureParameters(write, root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayMovieAsync("room", "Example Film", null, TestContext.Current.CancellationToken);
+
+        Assert.Equal("library", result.Source);
+        Assert.Equal(movieTarget, openedTarget);
+    }
+
+    [Fact]
+    public async Task PlayEpisode_UsesExactEpisodeFromFavouriteShow()
+    {
+        const string favouriteTarget = "plugin://plugin.video.synthetic/?show=example";
+        const string episodeTarget = "plugin://plugin.video.synthetic/?season=2&episode=3";
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Favourites.GetFavourites" => Element($$$"""
+                {"favourites":[{"title":"Example Show","type":"window","window":"videos","windowparameter":"{{{favouriteTarget}}}"}]}
+                """),
+            "Files.GetDirectory" => Element($$$"""
+                {"files":[{"label":"Exact","type":"episode","filetype":"file","file":"{{{episodeTarget.Replace("&", "\\u0026", StringComparison.Ordinal)}}}"}]}
+                """),
+            "Player.Open" => CaptureParameters(write, root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayEpisodeAsync("room", "Example Show", 2, 3, TestContext.Current.CancellationToken);
+
+        Assert.Equal("favourite", result.Source);
+        Assert.Equal(2, result.SeasonNumber);
+        Assert.Equal(3, result.EpisodeNumber);
+        Assert.Equal(episodeTarget, openedTarget);
+    }
+
+    [Fact]
+    public async Task PlayEpisode_FallsBackToExactLibraryEpisode()
+    {
+        const string target = "synthetic-library-episode";
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "Favourites.GetFavourites" => Element("{\"favourites\":[]}"),
+            "VideoLibrary.GetTVShows" => Element("{\"tvshows\":[{\"label\":\"Example Show\",\"tvshowid\":42}]}"),
+            "VideoLibrary.GetEpisodes" => Element($$$"""
+                {"episodes":[{"label":"Exact","type":"episode","season":2,"episode":3,"file":"{{{target}}}"}]}
+                """),
+            "Player.Open" => CaptureParameters(write, root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayEpisodeAsync("room", "Example Show", 2, 3, TestContext.Current.CancellationToken);
+
+        Assert.Equal("library", result.Source);
+        Assert.Equal(target, openedTarget);
+    }
+
+    [Fact]
+    public async Task PlayEpisode_AmbiguousFavouriteNamesFallBackToLibrary()
+    {
+        const string target = "synthetic-library-episode";
+        var favouriteDirectoryReads = 0;
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "Favourites.GetFavourites" => Element("{\"favourites\":[{\"title\":\"Example Show\",\"type\":\"window\",\"window\":\"videos\",\"windowparameter\":\"plugin://plugin.video.one/?show=example\"},{\"title\":\"Example Show\",\"type\":\"window\",\"window\":\"videos\",\"windowparameter\":\"plugin://plugin.video.two/?show=example\"}]}"),
+            "Files.GetDirectory" => throw new InvalidOperationException($"Unexpected ambiguous favourite traversal {++favouriteDirectoryReads}"),
+            "VideoLibrary.GetTVShows" => Element("{\"tvshows\":[{\"label\":\"Example Show\",\"tvshowid\":42}]}"),
+            "VideoLibrary.GetEpisodes" => Element($$$"""{"episodes":[{"label":"Exact","type":"episode","season":2,"episode":3,"file":"{{{target}}}"}]}"""),
+            "Player.Open" => Element("\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.PlayEpisodeAsync("room", "Example Show", 2, 3, TestContext.Current.CancellationToken);
+
+        Assert.Equal("library", result.Source);
+        Assert.Equal(0, favouriteDirectoryReads);
+    }
+
+    [Fact]
+    public async Task ResumeMovie_UsesKodiResumeOptionWithoutExposingTarget()
+    {
+        const string target = "synthetic-resume-movie";
+        bool? requestedResume = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetMovies" => Element($$$"""
+                {"movies":[{"label":"Example Film","year":2025,"file":"{{{target}}}","resume":{"position":420,"total":7200}}]}
+                """),
+            "Player.Open" => CaptureParameters(write, root => requestedResume = root.GetProperty("options").GetProperty("resume").GetBoolean(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.ResumeAsync("room", "Example Film", "movies", TestContext.Current.CancellationToken);
+
+        Assert.True(requestedResume);
+        Assert.Equal("movie", result.MediaType);
+        Assert.True(result.Observed);
+        Assert.DoesNotContain(target, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ResumeAuto_SelectsMostAdvancedMatchingEpisode()
+    {
+        const string target = "synthetic-resume-episode-two";
+        string? openedTarget = null;
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetMovies" => Element("{\"movies\":[]}"),
+            "VideoLibrary.GetEpisodes" => Element($$$"""
+                {"episodes":[
+                  {"label":"One","showtitle":"Example Show","season":1,"episode":1,"file":"synthetic-resume-episode-one","resume":{"position":60}},
+                  {"label":"Two","showtitle":"Example Show","season":1,"episode":2,"file":"{{{target}}}","resume":{"position":600}}
+                ]}
+                """),
+            "Player.Open" => CaptureParameters(write, root => openedTarget = root.GetProperty("item").GetProperty("file").GetString(), "\"OK\""),
+            "Player.GetActivePlayers" => Element("[{\"playerid\":1,\"type\":\"video\"}]"),
+            "Player.GetProperties" => Element("{\"speed\":1}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var service = CreateControlService(fake, controls => controls.AllowPlayback = true);
+
+        var result = await service.ResumeAsync("room", "Example Show", "auto", TestContext.Current.CancellationToken);
+
+        Assert.Equal(target, openedTarget);
+        Assert.Equal("episode", result.MediaType);
+        Assert.Equal(2, result.EpisodeNumber);
     }
 
     [Fact]

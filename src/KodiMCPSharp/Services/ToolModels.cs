@@ -209,6 +209,22 @@ public sealed record PlayNextEpisodeResult(
     int? PlayerId,
     string? State);
 
+public sealed record ResolvedPlaybackResult(
+    string Alias,
+    string Requested,
+    string MediaType,
+    string Source,
+    string SelectionBasis,
+    string? Label,
+    int? Year,
+    int? SeasonNumber,
+    int? EpisodeNumber,
+    bool Accepted,
+    bool Observed,
+    string Outcome,
+    int? PlayerId,
+    string? State);
+
 public sealed record MediaControlResult(
     string Alias,
     string Action,

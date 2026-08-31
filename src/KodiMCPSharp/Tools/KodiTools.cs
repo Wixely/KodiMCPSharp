@@ -232,6 +232,37 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.PlayNextEpisodeAsync(alias, show, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_play_movie"),
+     Description("Find and play a movie by title in one MCP call, with an optional exact year. Searches safe favourites first when unambiguous, then the Kodi library, then bounded learned add-on routes. Requires the playback gate.")]
+    public static async Task<string> PlayMovie(
+        KodiService service,
+        [Description("Movie title to resolve (1-200 printable characters).")] string title,
+        [Description("Optional exact release year from 1 to 9999.")] int? year = null,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlayMovieAsync(alias, title, year, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_play_episode"),
+     Description("Find and play one exact TV episode by show title, season, and episode in one MCP call. Searches safe favourites first, then the Kodi library, then bounded learned add-on routes. Requires the playback gate.")]
+    public static async Task<string> PlayEpisode(
+        KodiService service,
+        [Description("TV-show title to resolve (1-200 printable characters).")] string show,
+        [Description("Season number from 0 to 1000.")] int season,
+        [Description("Episode number from 0 to 10000.")] int episode,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.PlayEpisodeAsync(alias, show, season, episode, cancellationToken), JsonOptions);
+
+    [McpServerTool(Name = "kodi_resume"),
+     Description("Find and resume a partially watched library movie or episode by title in one MCP call. Uses Kodi's saved resume point and requires the playback gate.")]
+    public static async Task<string> Resume(
+        KodiService service,
+        [Description("Movie title, TV-show title, or episode title to resolve (1-200 printable characters).")] string title,
+        [Description("Closed domain: auto, movies, or episodes.")] string domain = "auto",
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.ResumeAsync(alias, title, domain, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_player_control"),
      Description("Pause, resume, toggle, stop, or skip the active item using a player ID from kodi_get_status. Requires the player-control gate.")]
     public static async Task<string> PlayerControl(
