@@ -66,6 +66,31 @@ public sealed record EpisodeWatchStateResult(
     bool Observed,
     string Completion);
 
+public sealed record BulkEpisodeWatchStateItem(
+    string? Label,
+    int SeasonNumber,
+    int EpisodeNumber,
+    string PreviousState,
+    string Outcome);
+
+public sealed record BulkEpisodeWatchStateResult(
+    string Alias,
+    string RequestedState,
+    string Range,
+    bool Preview,
+    bool IncludeSpecials,
+    int Matched,
+    int WouldChange,
+    int AlreadyTarget,
+    int SkippedUnnumbered,
+    int Updated,
+    int Verified,
+    int Failed,
+    int MaximumChanges,
+    bool CapExceeded,
+    int Returned,
+    IReadOnlyList<BulkEpisodeWatchStateItem> Episodes);
+
 public sealed record FavouriteMutationResult(
     string Alias,
     string RequestedState,

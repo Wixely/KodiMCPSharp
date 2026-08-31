@@ -11,6 +11,9 @@ namespace KodiMCPSharp.Services;
 
 public sealed partial class KodiService
 {
+    private const int MaximumBulkWatchStateChanges = 100;
+    private const int MaximumEpisodesPerTvShow = 2000;
+    private const int EpisodeReadPageSize = 200;
     private static readonly string[] ReadTools =
     [
         "kodi_list_instances", "kodi_get_capabilities", "kodi_get_status",
@@ -73,7 +76,7 @@ public sealed partial class KodiService
             "kodi_select_stream", "kodi_set_playback_mode", "kodi_playlist_add",
             "kodi_playlist_remove", "kodi_playlist_clear", "kodi_show_fullscreen_video",
             "kodi_save_addon_route", "kodi_forget_addon_route", "kodi_set_episode_watch_state",
-            "kodi_play_next_episode", "kodi_add_favourite", "kodi_remove_favourite",
+            "kodi_bulk_set_episode_watch_state", "kodi_play_next_episode", "kodi_add_favourite", "kodi_remove_favourite",
         ],
         ControlGates: new Dictionary<string, bool>
         {
@@ -838,6 +841,235 @@ public sealed partial class KodiService
             throw ToMcpException(instance.Alias, exception);
         }
     }
+
+    public async Task<BulkEpisodeWatchStateResult> BulkSetEpisodeWatchStateAsync(
+        string? alias,
+        string handle,
+        string state,
+        string range,
+        bool preview,
+        bool includeSpecials,
+        CancellationToken cancellationToken)
+    {
+        var normalizedState = NormalizeEpisodeWatchState(state);
+        var normalizedRange = range.Trim().ToLowerInvariant() switch
+        {
+            "before" => "before",
+            "through" => "through",
+            "after" => "after",
+            "all" => "all",
+            _ => throw new McpException("Episode watch-state range must be before, through, after, or all."),
+        };
+        if (!preview) EnsureControl(_options.Controls.AllowWatchState, "bulk episode watch-state control", "AllowWatchState");
+
+        var instance = _registry.Resolve(alias);
+        var entry = _handles.Resolve(handle, instance.Alias, HandleAction.SetWatchState);
+        if (entry.Kind != "episode" || entry.LibraryId is null)
+            throw new McpException("The handle is not a watch-state-capable library episode handle.");
+
+        try
+        {
+            var selectedResult = await instance.Client.CallAsync("VideoLibrary.GetEpisodeDetails", writer =>
+            {
+                writer.WriteNumber("episodeid", entry.LibraryId.Value);
+                WriteStringArray(writer, "properties", ["tvshowid", "season", "episode"]);
+            }, cancellationToken);
+            if (!selectedResult.TryGetProperty("episodedetails", out var selected) ||
+                GetInt(selected, "tvshowid") is not { } tvShowId ||
+                GetInt(selected, "season") is not { } selectedSeason ||
+                GetInt(selected, "episode") is not { } selectedEpisode)
+                throw new McpException("Kodi did not return a numbered TV-show position for the selected episode.");
+            if (selectedSeason == 0 && !includeSpecials && normalizedRange != "all")
+                throw new McpException("A season-zero anchor requires includeSpecials=true for a relative bulk range.");
+
+            var allEpisodes = await ReadTvShowEpisodesAsync(instance, tvShowId, cancellationToken);
+            var skippedUnnumbered = allEpisodes.Count(episode => episode.Season is null || episode.Episode is null);
+            var eligible = allEpisodes
+                .Where(episode => episode.Season is not null && episode.Episode is not null)
+                .Where(episode => includeSpecials || episode.Season > 0)
+                .Where(episode => IsInEpisodeRange(
+                    episode.Season!.Value, episode.Episode!.Value, selectedSeason, selectedEpisode, normalizedRange))
+                .OrderBy(episode => episode.Season)
+                .ThenBy(episode => episode.Episode)
+                .ThenBy(episode => episode.EpisodeId)
+                .ToArray();
+            var changing = eligible.Where(episode => !IsDesiredWatchState(episode, normalizedState)).ToArray();
+            var alreadyTarget = eligible.Length - changing.Length;
+            var capExceeded = changing.Length > MaximumBulkWatchStateChanges;
+
+            if (preview || capExceeded)
+            {
+                if (!preview && capExceeded)
+                    throw new McpException($"The bulk change would update {changing.Length} episodes, exceeding the {MaximumBulkWatchStateChanges}-episode cap. Choose a narrower range.");
+                var planItems = PrioritizeChangingEpisodes(eligible, normalizedState).Take(MaximumBulkWatchStateChanges)
+                    .Select(episode => ToBulkItem(episode, IsDesiredWatchState(episode, normalizedState) ? "already-target" : "would-change"))
+                    .ToArray();
+                return new BulkEpisodeWatchStateResult(
+                    instance.Alias, normalizedState, normalizedRange, true, includeSpecials,
+                    eligible.Length, changing.Length, alreadyTarget, skippedUnnumbered,
+                    0, 0, 0, MaximumBulkWatchStateChanges, capExceeded, planItems.Length, planItems);
+            }
+
+            var outcomes = eligible.ToDictionary(
+                episode => episode.EpisodeId,
+                episode => IsDesiredWatchState(episode, normalizedState) ? "already-target" : "pending");
+            var accepted = new HashSet<int>();
+            foreach (var episode in changing)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var response = await instance.Client.CallAsync("VideoLibrary.SetEpisodeDetails", writer =>
+                    {
+                        writer.WriteNumber("episodeid", episode.EpisodeId);
+                        writer.WriteNumber("playcount", normalizedState == "watched" ? 1 : 0);
+                        writer.WritePropertyName("resume");
+                        writer.WriteStartObject();
+                        writer.WriteNumber("position", 0);
+                        writer.WriteNumber("total", 0);
+                        writer.WriteEndObject();
+                    }, cancellationToken);
+                    if (IsAccepted(response))
+                    {
+                        accepted.Add(episode.EpisodeId);
+                        outcomes[episode.EpisodeId] = "accepted-awaiting-verification";
+                    }
+                    else
+                    {
+                        outcomes[episode.EpisodeId] = "not-accepted";
+                    }
+                }
+                catch (KodiRpcException exception) when (exception.Kind == KodiFailureKind.Remote)
+                {
+                    outcomes[episode.EpisodeId] = "remote-failure";
+                }
+            }
+
+            var observed = (await ReadTvShowEpisodesAsync(instance, tvShowId, cancellationToken))
+                .ToDictionary(episode => episode.EpisodeId);
+            var verified = 0;
+            foreach (var episodeId in accepted)
+            {
+                if (observed.TryGetValue(episodeId, out var observedEpisode) &&
+                    IsDesiredWatchState(observedEpisode, normalizedState))
+                {
+                    outcomes[episodeId] = "observed-complete";
+                    verified++;
+                }
+                else
+                {
+                    outcomes[episodeId] = "accepted-postcondition-not-observed";
+                }
+            }
+            var failed = changing.Length - verified;
+            var resultItems = PrioritizeChangingEpisodes(eligible, normalizedState)
+                .Take(MaximumBulkWatchStateChanges)
+                .Select(episode => ToBulkItem(episode, outcomes[episode.EpisodeId]))
+                .ToArray();
+            return new BulkEpisodeWatchStateResult(
+                instance.Alias, normalizedState, normalizedRange, false, includeSpecials,
+                eligible.Length, changing.Length, alreadyTarget, skippedUnnumbered,
+                accepted.Count, verified, failed, MaximumBulkWatchStateChanges, false, resultItems.Length, resultItems);
+        }
+        catch (KodiRpcException exception)
+        {
+            throw ToMcpException(instance.Alias, exception);
+        }
+    }
+
+    private async Task<IReadOnlyList<BulkEpisodeRecord>> ReadTvShowEpisodesAsync(
+        RegisteredKodiInstance instance,
+        int tvShowId,
+        CancellationToken cancellationToken)
+    {
+        var episodes = new List<BulkEpisodeRecord>();
+        var start = 0;
+        var total = int.MaxValue;
+        while (start < total)
+        {
+            var end = Math.Min(start + EpisodeReadPageSize, MaximumEpisodesPerTvShow + 1);
+            var result = await instance.Client.CallAsync("VideoLibrary.GetEpisodes", writer =>
+            {
+                writer.WriteNumber("tvshowid", tvShowId);
+                WriteStringArray(writer, "properties", ["title", "season", "episode", "playcount", "resume"]);
+                WriteLimits(writer, start, end);
+            }, cancellationToken);
+            var values = GetArray(result, "episodes");
+            var limits = GetLimits(result, start, values.Length);
+            total = limits.Total;
+            if (total > MaximumEpisodesPerTvShow)
+                throw new McpException($"The TV show contains more than the supported {MaximumEpisodesPerTvShow} episodes.");
+            foreach (var item in values)
+            {
+                if (GetInt(item, "episodeid") is not { } episodeId) continue;
+                var resumePosition = item.TryGetProperty("resume", out var resume) && resume.ValueKind == JsonValueKind.Object
+                    ? GetDouble(resume, "position") ?? 0
+                    : 0;
+                episodes.Add(new BulkEpisodeRecord(
+                    episodeId,
+                    _safeText.Clean(GetString(item, "label") ?? GetString(item, "title")),
+                    GetInt(item, "season"),
+                    GetInt(item, "episode"),
+                    GetInt(item, "playcount") ?? 0,
+                    resumePosition));
+            }
+            if (values.Length == 0) break;
+            start = limits.End > start ? limits.End : start + values.Length;
+        }
+        return episodes;
+    }
+
+    private static bool IsInEpisodeRange(
+        int season,
+        int episode,
+        int selectedSeason,
+        int selectedEpisode,
+        string range)
+    {
+        var comparison = season != selectedSeason ? season.CompareTo(selectedSeason) : episode.CompareTo(selectedEpisode);
+        return range switch
+        {
+            "before" => comparison < 0,
+            "through" => comparison <= 0,
+            "after" => comparison > 0,
+            "all" => true,
+            _ => false,
+        };
+    }
+
+    private static bool IsDesiredWatchState(BulkEpisodeRecord episode, string state) =>
+        state == "watched"
+            ? episode.PlayCount > 0 && episode.ResumePosition <= 0
+            : episode.PlayCount <= 0 && episode.ResumePosition <= 0;
+
+    private static IEnumerable<BulkEpisodeRecord> PrioritizeChangingEpisodes(
+        IEnumerable<BulkEpisodeRecord> episodes,
+        string state) =>
+        episodes.OrderBy(episode => IsDesiredWatchState(episode, state) ? 1 : 0)
+            .ThenBy(episode => episode.Season)
+            .ThenBy(episode => episode.Episode)
+            .ThenBy(episode => episode.EpisodeId);
+
+    private static string GetWatchState(BulkEpisodeRecord episode) =>
+        episode.PlayCount > 0 ? "watched" : episode.ResumePosition > 0 ? "partially-watched" : "unwatched";
+
+    private static BulkEpisodeWatchStateItem ToBulkItem(BulkEpisodeRecord episode, string outcome) =>
+        new(episode.Label, episode.Season!.Value, episode.Episode!.Value, GetWatchState(episode), outcome);
+
+    private static string NormalizeEpisodeWatchState(string state) => state.Trim().ToLowerInvariant() switch
+    {
+        "watched" => "watched",
+        "unwatched" => "unwatched",
+        _ => throw new McpException("Episode watch state must be watched or unwatched."),
+    };
+
+    private sealed record BulkEpisodeRecord(
+        int EpisodeId,
+        string? Label,
+        int? Season,
+        int? Episode,
+        int PlayCount,
+        double ResumePosition);
 
     public async Task<PageSummary> SearchFavouritesAsync(
         string? alias,

@@ -544,6 +544,192 @@ public sealed class KodiServiceTests
     }
 
     [Fact]
+    public async Task BulkEpisodeWatchState_PreviewUsesClosedRangeAndExcludesSpecials()
+    {
+        var toggles = 0;
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "VideoLibrary.GetEpisodeDetails" => Element("{\"episodedetails\":{\"tvshowid\":42,\"season\":1,\"episode\":2}}"),
+            "VideoLibrary.GetEpisodes" => Element("""
+                {"limits":{"start":0,"end":4,"total":4},"episodes":[
+                  {"episodeid":1,"label":"Special","season":0,"episode":1,"playcount":0,"resume":{"position":0}},
+                  {"episodeid":2,"label":"First","season":1,"episode":1,"playcount":1,"resume":{"position":0}},
+                  {"episodeid":3,"label":"Second","season":1,"episode":2,"playcount":0,"resume":{"position":120}},
+                  {"episodeid":4,"label":"Unnumbered","season":1,"playcount":0,"resume":{"position":0}}
+                ]}
+                """),
+            "VideoLibrary.SetEpisodeDetails" => throw new InvalidOperationException($"Unexpected mutation {++toggles}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var options = new KodiOptions { DefaultAlias = "room", Handles = new HandleOptions { LifetimeMinutes = 15, Capacity = 100 } };
+        var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", fake)], "room");
+        var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
+        var handle = handles.Create("room", "synthetic-episode", "video", "episode", HandleAction.SetWatchState, libraryId: 3);
+        var service = new KodiService(registry, handles, new TestLearnedRouteStore(), Options.Create(options), new SafeText(), TimeProvider.System);
+
+        var result = await service.BulkSetEpisodeWatchStateAsync(
+            "room", handle, "watched", "through", true, false, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Preview);
+        Assert.Equal(2, result.Matched);
+        Assert.Equal(1, result.WouldChange);
+        Assert.Equal(1, result.AlreadyTarget);
+        Assert.Equal(1, result.SkippedUnnumbered);
+        Assert.Equal(2, result.Returned);
+        Assert.Equal(0, toggles);
+        Assert.Collection(result.Episodes,
+            item => Assert.Equal("would-change", item.Outcome),
+            item => Assert.Equal("already-target", item.Outcome));
+    }
+
+    [Fact]
+    public async Task BulkEpisodeWatchState_AppliesAndVerifiesOneReread()
+    {
+        var episodeReads = 0;
+        var changedIds = new List<int>();
+        var fake = new FakeKodiClient((method, write) => method switch
+        {
+            "VideoLibrary.GetEpisodeDetails" => Element("{\"episodedetails\":{\"tvshowid\":42,\"season\":1,\"episode\":2}}"),
+            "VideoLibrary.GetEpisodes" => Element(episodeReads++ == 0
+                ? "{\"limits\":{\"start\":0,\"end\":2,\"total\":2},\"episodes\":[{\"episodeid\":1,\"label\":\"First\",\"season\":1,\"episode\":1,\"playcount\":0,\"resume\":{\"position\":0}},{\"episodeid\":2,\"label\":\"Second\",\"season\":1,\"episode\":2,\"playcount\":0,\"resume\":{\"position\":120}}]}"
+                : "{\"limits\":{\"start\":0,\"end\":2,\"total\":2},\"episodes\":[{\"episodeid\":1,\"label\":\"First\",\"season\":1,\"episode\":1,\"playcount\":1,\"resume\":{\"position\":0}},{\"episodeid\":2,\"label\":\"Second\",\"season\":1,\"episode\":2,\"playcount\":1,\"resume\":{\"position\":0}}]}"),
+            "VideoLibrary.SetEpisodeDetails" => CaptureParameters(write, root => changedIds.Add(root.GetProperty("episodeid").GetInt32()), "\"OK\""),
+            _ => throw new InvalidOperationException(method),
+        });
+        var (service, handles) = CreateControlServiceWithHandles(fake, controls => controls.AllowWatchState = true);
+        var handle = handles.Create("room", "synthetic-episode", "video", "episode", HandleAction.SetWatchState, libraryId: 2);
+
+        var result = await service.BulkSetEpisodeWatchStateAsync(
+            "room", handle, "watched", "through", false, false, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Preview);
+        Assert.Equal([1, 2], changedIds);
+        Assert.Equal(2, result.Updated);
+        Assert.Equal(2, result.Verified);
+        Assert.Equal(0, result.Failed);
+        Assert.Equal(2, episodeReads);
+        Assert.All(result.Episodes, item => Assert.Equal("observed-complete", item.Outcome));
+    }
+
+    [Fact]
+    public async Task BulkEpisodeWatchState_PreviewReportsCapWithoutMutating()
+    {
+        var episodeValues = Enumerable.Range(1, 101).Select(number => new
+        {
+            episodeid = number,
+            label = $"Synthetic {number}",
+            season = 1,
+            episode = number,
+            playcount = 0,
+            resume = new { position = 0 },
+        }).ToArray();
+        var episodeJson = JsonSerializer.Serialize(new
+        {
+            limits = new { start = 0, end = 101, total = 101 },
+            episodes = episodeValues,
+        });
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "VideoLibrary.GetEpisodeDetails" => Element("{\"episodedetails\":{\"tvshowid\":42,\"season\":1,\"episode\":101}}"),
+            "VideoLibrary.GetEpisodes" => Element(episodeJson),
+            _ => throw new InvalidOperationException(method),
+        });
+        var options = new KodiOptions { DefaultAlias = "room", Handles = new HandleOptions { LifetimeMinutes = 15, Capacity = 100 } };
+        var registry = new KodiInstanceRegistry([new RegisteredKodiInstance("room", fake)], "room");
+        var handles = new InMemoryHandleStore(15, 100, TimeProvider.System);
+        var handle = handles.Create("room", "synthetic-episode", "video", "episode", HandleAction.SetWatchState, libraryId: 101);
+        var service = new KodiService(registry, handles, new TestLearnedRouteStore(), Options.Create(options), new SafeText(), TimeProvider.System);
+
+        var result = await service.BulkSetEpisodeWatchStateAsync(
+            "room", handle, "watched", "through", true, false, TestContext.Current.CancellationToken);
+
+        Assert.True(result.CapExceeded);
+        Assert.Equal(101, result.WouldChange);
+        Assert.Equal(100, result.Returned);
+        Assert.Equal(100, result.Episodes.Count);
+    }
+
+    [Fact]
+    public async Task BulkEpisodeWatchState_ApplyRequiresWatchStateGate()
+    {
+        var rpcCalls = 0;
+        var fake = new FakeKodiClient((_, _) =>
+        {
+            rpcCalls++;
+            return Element("{}");
+        });
+        var (service, handles) = CreateControlServiceWithHandles(fake, _ => { });
+        var handle = handles.Create("room", "synthetic-episode", "video", "episode", HandleAction.SetWatchState, libraryId: 1);
+
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() =>
+            service.BulkSetEpisodeWatchStateAsync(
+                "room", handle, "watched", "all", false, false, TestContext.Current.CancellationToken));
+
+        Assert.Contains("AllowWatchState", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, rpcCalls);
+    }
+
+    [Fact]
+    public async Task BulkEpisodeWatchState_ApplyRefusesOverCapBeforeMutation()
+    {
+        var episodeValues = Enumerable.Range(1, 101).Select(number => new
+        {
+            episodeid = number,
+            label = $"Synthetic {number}",
+            season = 1,
+            episode = number,
+            playcount = 0,
+            resume = new { position = 0 },
+        }).ToArray();
+        var episodeJson = JsonSerializer.Serialize(new
+        {
+            limits = new { start = 0, end = 101, total = 101 },
+            episodes = episodeValues,
+        });
+        var mutations = 0;
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "VideoLibrary.GetEpisodeDetails" => Element("{\"episodedetails\":{\"tvshowid\":42,\"season\":1,\"episode\":101}}"),
+            "VideoLibrary.GetEpisodes" => Element(episodeJson),
+            "VideoLibrary.SetEpisodeDetails" => throw new InvalidOperationException($"Unexpected mutation {++mutations}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var (service, handles) = CreateControlServiceWithHandles(fake, controls => controls.AllowWatchState = true);
+        var handle = handles.Create("room", "synthetic-episode", "video", "episode", HandleAction.SetWatchState, libraryId: 101);
+
+        var exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(() =>
+            service.BulkSetEpisodeWatchStateAsync(
+                "room", handle, "watched", "through", false, false, TestContext.Current.CancellationToken));
+
+        Assert.Contains("100-episode cap", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, mutations);
+    }
+
+    [Fact]
+    public async Task BulkEpisodeWatchState_RetrySkipsEpisodesAlreadyAtTarget()
+    {
+        var mutations = 0;
+        var fake = new FakeKodiClient((method, _) => method switch
+        {
+            "VideoLibrary.GetEpisodeDetails" => Element("{\"episodedetails\":{\"tvshowid\":42,\"season\":1,\"episode\":1}}"),
+            "VideoLibrary.GetEpisodes" => Element("{\"limits\":{\"start\":0,\"end\":1,\"total\":1},\"episodes\":[{\"episodeid\":1,\"label\":\"Complete\",\"season\":1,\"episode\":1,\"playcount\":1,\"resume\":{\"position\":0}}]}"),
+            "VideoLibrary.SetEpisodeDetails" => throw new InvalidOperationException($"Unexpected retry mutation {++mutations}"),
+            _ => throw new InvalidOperationException(method),
+        });
+        var (service, handles) = CreateControlServiceWithHandles(fake, controls => controls.AllowWatchState = true);
+        var handle = handles.Create("room", "synthetic-episode", "video", "episode", HandleAction.SetWatchState, libraryId: 1);
+
+        var result = await service.BulkSetEpisodeWatchStateAsync(
+            "room", handle, "watched", "all", false, false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, result.WouldChange);
+        Assert.Equal(1, result.AlreadyTarget);
+        Assert.Equal(0, result.Updated);
+        Assert.Equal("already-target", Assert.Single(result.Episodes).Outcome);
+        Assert.Equal(0, mutations);
+    }
+
+    [Fact]
     public async Task TvShowBrowse_UsesOpaqueShowAndSeasonHandles()
     {
         int? requestedTvShowId = null;

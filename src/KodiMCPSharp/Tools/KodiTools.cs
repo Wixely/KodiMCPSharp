@@ -141,6 +141,20 @@ public static class KodiTools
         CancellationToken cancellationToken = default) =>
         JsonSerializer.Serialize(await service.SetEpisodeWatchStateAsync(alias, handle, state, cancellationToken), JsonOptions);
 
+    [McpServerTool(Name = "kodi_bulk_set_episode_watch_state"),
+     Description("Preview or apply a bounded watched/unwatched change to episodes before, through, after, or across the TV show containing a server-issued episode handle. Preview is the default; mutation uses the watch-state gate.")]
+    public static async Task<string> BulkSetEpisodeWatchState(
+        KodiService service,
+        [Description("Opaque library episode handle that anchors the TV show and range.")] string handle,
+        [Description("Closed target state: watched or unwatched.")] string state,
+        [Description("Closed range relative to the selected episode: before excludes it, through includes it, after excludes it, and all includes every eligible episode.")] string range = "through",
+        [Description("When true, return the bounded change plan without mutating Kodi. Set false to apply it.")] bool preview = true,
+        [Description("Include numbered season-zero specials. False by default.")] bool includeSpecials = false,
+        [Description("Configured Kodi alias. May be omitted only when a default or single instance is configured.")] string? alias = null,
+        CancellationToken cancellationToken = default) =>
+        JsonSerializer.Serialize(await service.BulkSetEpisodeWatchStateAsync(
+            alias, handle, state, range, preview, includeSpecials, cancellationToken), JsonOptions);
+
     [McpServerTool(Name = "kodi_list_addons"),
      Description("List enabled Kodi add-ons with bounded, redacted metadata. Browsable add-ons receive an opaque root handle.")]
     public static async Task<string> ListAddons(

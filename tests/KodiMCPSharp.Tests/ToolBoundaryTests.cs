@@ -18,7 +18,7 @@ public sealed class ToolBoundaryTests
 
         Assert.Equal(
         [
-            "kodi_add_favourite", "kodi_bind_addon_route", "kodi_browse", "kodi_browse_tv_show", "kodi_forget_addon_route", "kodi_get_capabilities",
+            "kodi_add_favourite", "kodi_bind_addon_route", "kodi_browse", "kodi_browse_tv_show", "kodi_bulk_set_episode_watch_state", "kodi_forget_addon_route", "kodi_get_capabilities",
             "kodi_get_status", "kodi_list_addon_routes", "kodi_list_addons", "kodi_list_continue_watching",
             "kodi_list_favourites", "kodi_list_genres", "kodi_list_instances", "kodi_list_recent",
             "kodi_play_item", "kodi_play_next_episode", "kodi_player_control",

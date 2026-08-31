@@ -21,6 +21,7 @@ Status: browsing, persistent fixed and single-input learned add-on routes, guard
 | `kodi_add_favourite` | Idempotently add a server-issued media or folder handle to favourites; disabled by default |
 | `kodi_remove_favourite` | Idempotently remove one exact supported favourite handle; disabled by default |
 | `kodi_set_episode_watch_state` | Gated watched/unwatched update for one episode handle |
+| `kodi_bulk_set_episode_watch_state` | Preview or apply a capped TV-show episode range update from one episode handle |
 | `kodi_play_next_episode` | Resolve and play a show's next episode in one MCP call |
 | `kodi_list_addons` | List enabled add-ons and issue handles for browsable roots |
 | `kodi_browse` | List a closed source root or traverse a server-issued folder handle |
@@ -62,6 +63,12 @@ The existing episode, song, and album searches continue to use `query`; year and
 `kodi_play_next_episode` is the low-call path for requests such as “play the next episode of Example Show.” One MCP call performs a favourites-first lookup, then falls back to the Kodi TV library, and finally to bounded learned add-on routes. It resumes a partially watched episode before choosing the first unwatched episode in season/episode order. Safe video-window favourites and add-on routes remain server-observed; the agent supplies only a show title. Generic add-on fallback is available only when a browse-capable `next episodes` route or parameterized TV-search route has already been learned. KodiMCPSharp does not crawl arbitrary add-ons, accept raw plug-in paths, or inject text into add-on UI dialogs.
 
 Favourite changes use separate add and remove tools even though Kodi's underlying method is a toggle. KodiMCPSharp reads the exact current state before calling Kodi and re-reads it afterward, making ordinary retries idempotent. Duplicate exact favourites are reported without toggling. Media favourites remain playable and safe video-window plug-in favourites remain browseable; script, Android-app, arbitrary-window, and other executable favourites receive no action handle. Rename, artwork changes, and ordering are not exposed because Kodi JSON-RPC has no dedicated operations for them.
+
+### Bulk episode watch state
+
+`kodi_bulk_set_episode_watch_state` anchors a range to one server-issued library episode handle. `before` excludes the anchor, `through` includes it and everything earlier, `after` excludes it, and `all` selects every eligible episode in the same TV show. Preview is the default and does not require the write gate; applying requires `Kodi:ReadOnly=false` and `Kodi:Controls:AllowWatchState=true`. At most 100 episodes may change in one call, and returned per-episode details are also capped at 100 with changing episodes prioritized. Aggregate counts still cover the complete matched range.
+
+Only episodes with both season and episode numbers are eligible. Season zero is excluded unless `includeSpecials=true`; a season-zero relative anchor requires that explicit opt-in. Multiple Kodi records at the same season/episode coordinate are treated as separate versions and updated together when that coordinate is in range. Every actual update sets the requested play count and clears resume, while leaving last-played metadata untouched. Kodi remote failures are reported per episode where the connection remains usable; cancellation or a connection/authentication failure stops further work. Re-previewing and retrying is safe because current state is re-read and episodes already in the requested state are not mutated.
 
 ## Requirements
 
@@ -176,19 +183,19 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 30-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
+- a fixed 31-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
 - atomic learned-route persistence, reload, write gating, add-on provenance, fixed-route reuse, and removal;
 - single-string learned search inference, closed search-key policy, encoded binding, and opaque bound-route reuse;
 - player actions, seek bounds, volume/mute, enumerated stream selection, repeat/shuffle, and opaque-handle playlist mutations with synthetic postcondition checks;
 - composable movie and TV-show title/year/genre filters, input validation, and safe genre metadata in results;
 - genre discovery, recent and in-progress media views, and opaque TV-show/season hierarchy traversal.
-- case-insensitive favourite search, gated idempotent add/remove with duplicate refusal, plus explicit movie/episode watch-state discovery and gated single-episode updates.
+- case-insensitive favourite search, gated idempotent add/remove with duplicate refusal, plus explicit movie/episode watch-state discovery and gated single/bulk episode updates.
 - one-call next-episode playback with favourites, library, and learned-route resolution priority.
 
 Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux and smoke-publishes `win-x64`, `linux-x64`, and `linux-arm64` artifacts with three-day retention.
 
 ## Project status and next action
 
-Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, and TV hierarchy discovery. Live acceptance covers every new discovery domain, opaque TV show → season → playable episode traversal, and restoring active playback to Kodi's full-screen video window. Other expanded controls and representative add-on traversal remain to be verified live.
+Synthetic acceptance covers all media-control categories plus genre, recent, continue-watching, TV hierarchy discovery, favourite search, and idempotent favourite changes. A fresh Windows self-contained package exposes all 30 tools through runtime MCP discovery. Live acceptance covers every new discovery domain, opaque TV show → season → playable episode traversal, and restoring active playback to Kodi's full-screen video window. Favourite mutation, other expanded controls, and representative add-on traversal remain to be verified live.
 
 See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.
