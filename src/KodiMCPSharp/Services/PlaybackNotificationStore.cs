@@ -23,7 +23,7 @@ public sealed class PlaybackNotificationStore
     {
         _capacity = options.Value.PlaybackNotifications.Capacity;
         _safeText = safeText;
-        foreach (var instance in options.Value.Instances)
+        foreach (var instance in options.Value.Instances.Where(instance => instance.Enabled))
             _states[instance.Alias] = new InstanceState(!string.IsNullOrEmpty(instance.WebSocketEndpoint));
     }
 

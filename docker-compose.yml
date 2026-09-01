@@ -4,13 +4,13 @@ services:
     image: kodimcpsharp:local
     restart: unless-stopped
     ports:
-      - "127.0.0.1:5712:5712"
+      - "127.0.0.1:5719:5719"
     volumes:
       - kodimcp-logs:/app/logs
       - kodimcp-data:/app/kodimcpsharp_data
     environment:
       KODIMCP_Server__Host: 0.0.0.0
-      KODIMCP_Server__Port: 5712
+      KODIMCP_Server__Port: 5719
       KODIMCP_Server__Path: /mcp
     # Add a read-only bind mount for an untracked KodiMCPSharp.Local.json when
     # configuring instances. Do not put endpoints or credentials in this file.

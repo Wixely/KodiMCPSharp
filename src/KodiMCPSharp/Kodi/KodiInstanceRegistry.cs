@@ -16,7 +16,7 @@ public sealed partial class KodiInstanceRegistry : IDisposable
         var configured = options.Value;
         _defaultAlias = configured.DefaultAlias;
         _instances = new Dictionary<string, RegisteredKodiInstance>(StringComparer.OrdinalIgnoreCase);
-        foreach (var instance in configured.Instances)
+        foreach (var instance in configured.Instances.Where(instance => instance.Enabled))
         {
             var handler = new SocketsHttpHandler
             {

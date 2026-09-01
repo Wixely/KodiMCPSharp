@@ -105,6 +105,7 @@ try
     var app = builder.Build();
     var server = app.Services.GetRequiredService<IOptions<ServerOptions>>().Value;
     var kodi = app.Services.GetRequiredService<IOptions<KodiOptions>>().Value;
+    var configuredInstanceCount = kodi.Instances.Count(instance => instance.Enabled);
     var controlsEnabled = !kodi.ReadOnly &&
         (kodi.Controls.AllowPlayback || kodi.Controls.AllowPlayerControl || kodi.Controls.AllowSeek ||
          kodi.Controls.AllowVolume || kodi.Controls.AllowStreamSelection || kodi.Controls.AllowPlaybackModes ||
@@ -118,7 +119,7 @@ try
     {
         status = "ok",
         server = "KodiMCPSharp",
-        configuredInstances = kodi.Instances.Count,
+        configuredInstances = configuredInstanceCount,
         readOnly = kodi.ReadOnly,
         controlsEnabled,
         timeUtc = DateTimeOffset.UtcNow,
@@ -132,7 +133,7 @@ try
 
     Log.Information(
         "KodiMCPSharp starting at http://{Host}:{Port}{Path}; mode={Mode}; instances={InstanceCount}; readOnly={ReadOnly}; controls={ControlsEnabled}",
-        server.Host, server.Port, server.Path, isWindowsService ? "WindowsService" : "Interactive", kodi.Instances.Count,
+        server.Host, server.Port, server.Path, isWindowsService ? "WindowsService" : "Interactive", configuredInstanceCount,
         kodi.ReadOnly, controlsEnabled);
 
     await app.RunAsync();

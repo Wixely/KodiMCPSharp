@@ -61,6 +61,7 @@ public sealed class LearnedRouteOptions
 
 public sealed class KodiInstanceOptions
 {
+    public bool Enabled { get; set; } = true;
     public string Alias { get; set; } = string.Empty;
     public string Endpoint { get; set; } = string.Empty;
     public string Username { get; set; } = string.Empty;

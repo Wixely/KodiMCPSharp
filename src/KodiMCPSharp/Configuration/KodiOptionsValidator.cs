@@ -27,7 +27,8 @@ public sealed class KodiOptionsValidator : IValidateOptions<KodiOptions>
             failures.Add("Kodi:PlaybackNotifications:ReconnectDelaySeconds must be between 1 and 300.");
 
         var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var instance in options.Instances)
+        var enabledInstances = options.Instances.Where(instance => instance.Enabled).ToArray();
+        foreach (var instance in enabledInstances)
         {
             if (string.IsNullOrWhiteSpace(instance.Alias) || instance.Alias.Length > 64 ||
                 instance.Alias.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_')))
@@ -60,7 +61,7 @@ public sealed class KodiOptionsValidator : IValidateOptions<KodiOptions>
             }
         }
 
-        if (options.PlaybackNotifications.Enabled && !options.Instances.Any(instance => !string.IsNullOrEmpty(instance.WebSocketEndpoint)))
+        if (options.PlaybackNotifications.Enabled && !enabledInstances.Any(instance => !string.IsNullOrEmpty(instance.WebSocketEndpoint)))
             failures.Add("Kodi playback notifications require at least one configured instance WebSocketEndpoint.");
 
         if (options.DefaultAlias.Length > 0 && !aliases.Contains(options.DefaultAlias))

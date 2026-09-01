@@ -1,7 +1,7 @@
 {
   "Server": {
     "Host": "localhost",
-    "Port": 5712,
+    "Port": 5719,
     "Path": "/mcp",
     "Password": ""
   },
@@ -43,7 +43,17 @@
       "Capacity": 200,
       "ReconnectDelaySeconds": 5
     },
-    "Instances": []
+    "Instances": [
+      {
+        "Enabled": false,
+        "Alias": "living-room",
+        "Endpoint": "http://kodi-host:8080/jsonrpc",
+        "WebSocketEndpoint": "ws://kodi-host:9090/jsonrpc",
+        "Username": "<kodi-webserver-user>",
+        "Password": "<kodi-webserver-password>",
+        "AllowInvalidTlsCertificate": false
+      }
+    ]
   },
   "Serilog": {
     "MinimumLevel": {

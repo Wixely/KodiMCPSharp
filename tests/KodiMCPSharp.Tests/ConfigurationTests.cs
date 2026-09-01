@@ -1,4 +1,8 @@
 using KodiMCPSharp.Configuration;
+using KodiMCPSharp.Kodi;
+using KodiMCPSharp.Security;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace KodiMCPSharp.Tests;
 
@@ -14,6 +18,52 @@ public sealed class ConfigurationTests
         });
 
         Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void KodiOptions_IgnoresDisabledPlaceholderInstance()
+    {
+        var options = new KodiOptions
+        {
+            Instances =
+            [
+                new()
+                {
+                    Enabled = false,
+                    Alias = "replace this alias",
+                    Endpoint = "<replace-endpoint>",
+                    WebSocketEndpoint = "<replace-websocket-endpoint>",
+                },
+            ],
+        };
+
+        var result = new KodiOptionsValidator().Validate(null, options);
+        using var registry = new KodiInstanceRegistry(
+            Options.Create(options), new SafeText(), NullLogger<KodiInstanceRegistry>.Instance);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(0, registry.Count);
+    }
+
+    [Fact]
+    public void KodiOptions_DisabledPlaceholderDoesNotSatisfyNotificationEndpointRequirement()
+    {
+        var result = new KodiOptionsValidator().Validate(null, new KodiOptions
+        {
+            PlaybackNotifications = new PlaybackNotificationOptions { Enabled = true },
+            Instances =
+            [
+                new()
+                {
+                    Enabled = false,
+                    Alias = "placeholder",
+                    Endpoint = "http://example.invalid/jsonrpc",
+                    WebSocketEndpoint = "ws://example.invalid:9090/jsonrpc",
+                },
+            ],
+        });
+
+        Assert.True(result.Failed);
     }
 
     [Theory]

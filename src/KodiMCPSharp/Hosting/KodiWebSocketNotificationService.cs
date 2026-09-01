@@ -21,7 +21,7 @@ public sealed partial class KodiWebSocketNotificationService(
     {
         if (!_options.PlaybackNotifications.Enabled) return Task.CompletedTask;
         var workers = _options.Instances
-            .Where(instance => !string.IsNullOrEmpty(instance.WebSocketEndpoint))
+            .Where(instance => instance.Enabled && !string.IsNullOrEmpty(instance.WebSocketEndpoint))
             .Select(instance => RunInstanceAsync(instance, stoppingToken));
         return Task.WhenAll(workers);
     }

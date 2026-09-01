@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>KodiMCPSharp</RootNamespace>
     <AssemblyName>KodiMCPSharp</AssemblyName>
-    <Version>0.1.1</Version>
+    <Version>0.2.0</Version>
     <Authors>Wixely</Authors>
     <RepositoryUrl>https://github.com/Wixely/KodiMCPSharp</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

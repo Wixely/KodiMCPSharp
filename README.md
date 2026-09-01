@@ -110,7 +110,7 @@ Commands and authoritative state reads use JSON-RPC over HTTP POST at Kodi's `/j
 
 ## Configure
 
-The checked-in [`KodiMCPSharp.json`](src/KodiMCPSharp/KodiMCPSharp.json) contains safe server defaults and no Kodi endpoint or credential. Put private settings in `src/KodiMCPSharp/KodiMCPSharp.Local.json` for local source runs, or beside the published executable as `KodiMCPSharp.Local.json`. That filename is ignored by Git.
+The checked-in [`KodiMCPSharp.json`](src/KodiMCPSharp/KodiMCPSharp.json) contains safe server defaults plus one disabled placeholder Kodi instance. Disabled instances are ignored by validation, readiness, connection workers, notifications, and active-instance counts. Copy the placeholder into `src/KodiMCPSharp/KodiMCPSharp.Local.json` for local source runs, or into `KodiMCPSharp.Local.json` beside the published executable, replace every placeholder, and set `Enabled` to `true`. That local filename is ignored by Git.
 
 Use this local-only shape, replacing every placeholder on the operator machine:
 
@@ -133,6 +133,7 @@ Use this local-only shape, replacing every placeholder on the operator machine:
     },
     "Instances": [
       {
+        "Enabled": true,
         "Alias": "living-room",
         "Endpoint": "<absolute-http-or-https-endpoint-ending-in-/jsonrpc>",
         "WebSocketEndpoint": "<absolute-ws-or-wss-endpoint-ending-in-/jsonrpc>",
@@ -144,11 +145,12 @@ Use this local-only shape, replacing every placeholder on the operator machine:
 }
 ```
 
-Settings can also come from environment variables with the `KODIMCP_` prefix. Double underscores represent configuration nesting; for example, `KODIMCP_Server__Password` and `KODIMCP_Kodi__Instances__0__Alias`. Prefer a protected environment file or secret injection facility rather than command-line arguments, because command lines may be visible to other users.
+Settings can also come from environment variables with the `KODIMCP_` prefix. Double underscores represent configuration nesting; for example, `KODIMCP_Server__Password`, `KODIMCP_Kodi__Instances__0__Enabled=true`, and `KODIMCP_Kodi__Instances__0__Alias`. Because array entries layer by index, an environment- or local-file instance replacing the checked placeholder must explicitly set `Enabled=true`. Prefer a protected environment file or secret injection facility rather than command-line arguments, because command lines may be visible to other users.
 
 Configuration is validated at startup:
 
 - aliases allow only ASCII letters, digits, `-`, and `_` and are compared case-insensitively;
+- disabled placeholder instances are ignored until `Enabled` is set to `true`;
 - endpoints must be absolute HTTP(S) URIs ending in `/jsonrpc`;
 - optional WebSocket endpoints must be absolute WS(S) URIs ending in `/jsonrpc`; enabling playback notifications requires at least one explicit WebSocket endpoint;
 - a non-loopback MCP bind requires `Server:Password`;
@@ -175,7 +177,7 @@ dotnet run --project .\src\KodiMCPSharp\KodiMCPSharp.csproj
 
 After publishing Windows, run `scripts\smoke-package.ps1` against the executable to verify safe startup, MCP negotiation, the expected tool catalogue, forbidden-input absence, and local-config exclusion. Add `-ProbeAddons` only with a private configured package when Kodi is reachable; the probe reports counts rather than add-on identities.
 
-The default MCP endpoint is `http://localhost:5712/mcp`. Health endpoints are `/healthz` (process health) and `/readyz` (whether at least one Kodi alias is configured). The service is allowed to start with no Kodi instances so packaging can be smoke-tested safely.
+The default MCP endpoint is `http://localhost:5719/mcp`. Health endpoints are `/healthz` (process health) and `/readyz` (whether at least one Kodi alias is configured). The service is allowed to start with no Kodi instances so packaging can be smoke-tested safely.
 
 VS Code build, test, run, and debug definitions are included under `.vscode`.
 
@@ -225,7 +227,7 @@ The xUnit suite uses only synthetic metadata and an in-process fake Kodi HTTP tr
 - path/URI redaction;
 - opaque-handle action, expiry, capacity, and cross-instance isolation;
 - add-on handle traversal without returning `plugin://` paths;
-- a fixed 53-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
+- a fixed 54-tool MCP catalogue with no raw-method/path/database-ID inputs and disabled-by-default control and route-write policies;
 - atomic learned-route persistence, reload, write gating, add-on provenance, fixed-route reuse, and removal;
 - learned-route add-on availability and opt-in bounded health probes that never invent parameter values or play media;
 - single-string learned search inference, closed search-key policy, encoded binding, and opaque bound-route reuse;
@@ -243,6 +245,6 @@ Run `dotnet test KodiMCPSharp.slnx`. CI builds and tests on Windows and Linux an
 
 ## Project status and next action
 
-Synthetic acceptance covers all media-control categories plus queue inspection/reordering, filtered random playback, cross-show up-next selection, movie sets, video tags, rich title details, music history and semantic playback, learned-route health, gated library maintenance, optional PVR, genre, recent, continue-watching, viewing history, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current source catalogue contains 53 bounded tools. Live acceptance covers every prior discovery domain, opaque TV and movie-set traversal, video-tag, rich-detail, and recently played music retrieval, Kodi 21 plug-in-source listing, generic add-on navigation, Fen Light parameterized search across a process restart, full-screen video restoration, and bounded per-show up-next discovery. Queue reordering, random playback, semantic music playback, library maintenance, PVR, favourite mutation, bulk watch state, the complete control matrix, the second learned-search add-on, systemd, and Docker remain to be verified.
+Synthetic acceptance covers all media-control categories plus queue inspection/reordering, filtered random playback, cross-show up-next selection, movie sets, video tags, rich title details, music history and semantic playback, learned-route health, gated library maintenance, optional PVR, genre, recent, continue-watching, viewing history, TV hierarchy discovery, favourite search, idempotent favourite changes, bounded bulk watch-state changes, current add-on page capture, and single-call playback resolution. Fresh Windows and Linux self-contained packages publish successfully; the current source catalogue contains 54 bounded tools. Live acceptance covers every prior discovery domain, opaque TV and movie-set traversal, video-tag, rich-detail, and recently played music retrieval, Kodi 21 plug-in-source listing, generic add-on navigation, Fen Light parameterized search across a process restart, full-screen video restoration, and bounded per-show up-next discovery. Queue reordering, random playback, semantic music playback, library maintenance, PVR, favourite mutation, bulk watch state, the complete control matrix, the second learned-search add-on, systemd, and Docker remain to be verified.
 
-See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is intended for a future public `Wixely/KodiMCPSharp` repository under the [MIT License](LICENSE), but this local repository has not been published.
+See [`PLAN.md`](PLAN.md) for open questions and milestone tracking. KodiMCPSharp is published as `Wixely/KodiMCPSharp` under the [MIT License](LICENSE).
