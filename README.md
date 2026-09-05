@@ -177,7 +177,7 @@ dotnet run --project .\src\KodiMCPSharp\KodiMCPSharp.csproj
 
 After publishing Windows, run `scripts\smoke-package.ps1` against the executable to verify safe startup, MCP negotiation, the expected tool catalogue, forbidden-input absence, and local-config exclusion. Add `-ProbeAddons` only with a private configured package when Kodi is reachable; the probe reports counts rather than add-on identities.
 
-The default MCP endpoint is `http://localhost:5719/mcp`. Health endpoints are `/healthz` (process health) and `/readyz` (whether at least one Kodi alias is configured). The service is allowed to start with no Kodi instances so packaging can be smoke-tested safely.
+The default MCP endpoint is `http://localhost:5720/mcp`. Health endpoints are `/healthz` (process health) and `/readyz` (whether at least one Kodi alias is configured). The service is allowed to start with no Kodi instances so packaging can be smoke-tested safely.
 
 VS Code build, test, run, and debug definitions are included under `.vscode`.
 

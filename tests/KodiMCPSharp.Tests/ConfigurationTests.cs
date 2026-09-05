@@ -1,3 +1,4 @@
+using System.Text.Json;
 using KodiMCPSharp.Configuration;
 using KodiMCPSharp.Kodi;
 using KodiMCPSharp.Security;
@@ -8,6 +9,16 @@ namespace KodiMCPSharp.Tests;
 
 public sealed class ConfigurationTests
 {
+    [Fact]
+    public void ServerOptions_AndPackagedConfigUseAssignedMcpSharpPort()
+    {
+        Assert.Equal(5720, new ServerOptions().Port);
+
+        using var config = JsonDocument.Parse(
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "KodiMCPSharp.json")));
+        Assert.Equal(5720, config.RootElement.GetProperty("Server").GetProperty("Port").GetInt32());
+    }
+
     [Fact]
     public void KodiOptions_AcceptsSafeConfiguration()
     {

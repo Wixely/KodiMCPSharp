@@ -28,11 +28,11 @@ ENV DOTNET_ENVIRONMENT=Production \
     ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_RUNNING_IN_CONTAINER=true \
     KODIMCP_Server__Host=0.0.0.0 \
-    KODIMCP_Server__Port=5719 \
+    KODIMCP_Server__Port=5720 \
     KODIMCP_Server__Path=/mcp
 
 COPY --from=build --chown=$APP_UID:0 /app/publish ./
 USER $APP_UID
-EXPOSE 5719
+EXPOSE 5720
 VOLUME ["/app/logs", "/app/kodimcpsharp_data"]
 ENTRYPOINT ["./KodiMCPSharp"]
