@@ -1,7 +1,7 @@
 {
   "Server": {
     "Host": "localhost",
-    "Port": 5719,
+    "Port": 5720,
     "Path": "/mcp",
     "Password": ""
   },

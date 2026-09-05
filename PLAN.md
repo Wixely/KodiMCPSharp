@@ -218,6 +218,7 @@ Use JSON, environment variables, and command-line configuration consistently wit
 - 2026-08-31: The default MCP listen port changed from 5712 to 5719 to avoid a conflict with another MCP service. Source configuration, Docker metadata, Compose mapping, and operator documentation use the new default consistently; explicit runtime overrides remain supported.
 - 2026-09-01: Added a disabled placeholder Kodi instance to the checked configuration plus first-class per-instance `Enabled` handling. Disabled entries are excluded from validation, readiness, HTTP/WebSocket workers, notification state, logs, and active-instance counts. The Release suite passes 116 tests; a fresh Windows package started safely with zero configured instances and exposed all 54 tools.
 - 2026-09-01: Version advanced to 0.2.0 for the default-port migration and disabled placeholder-instance configuration release.
+- 2026-09-05: The default MCP listen port moved from 5719 to 5720 after a full MCPHub catalogue sweep found that released ADBMCPSharp and KodiMCPSharp configurations both claimed 5719. Port 5720 is unique across the 20 managed MCPSharp services; source defaults, container metadata, Compose, documentation, and a regression test now agree on the assignment.
 - Linux systemd and Docker runtime remain unverified.
 
 ## Next actions
